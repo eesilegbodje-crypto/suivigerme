@@ -16,6 +16,8 @@ import {
   Loader2,
   CheckCircle2,
   Circle,
+  ClipboardList,
+  StickyNote,
 } from "lucide-react";
 import { appelApi, lireSession, ecrireSession } from "./lib/api";
 
@@ -402,21 +404,98 @@ function ModalParticipant({ participant, onFermer, onEnregistre, token }) {
   );
 }
 
+function NiveauBadge({ niveau }) {
+  const couleurs = { Bon: "emerald", Moyen: "amber", Faible: "rose" };
+  return <Badge couleur={couleurs[niveau] || "slate"}>{niveau}</Badge>;
+}
+
+function libelleRubriqueAbf(rubriqueId) {
+  return ABF_RUBRIQUES.find((r) => r.rubriqueId === rubriqueId)?.titre || rubriqueId;
+}
+
+function libelleDomaineBesoin(domaineId) {
+  return ABF_DOMAINES.find((d) => d.id === domaineId)?.label || domaineId;
+}
+
 function ModalDetailParticipant({ participantId, onFermer, token }) {
   const [participant, setParticipant] = useState(null);
+  const [evaluations, setEvaluations] = useState([]);
+  const [notes, setNotes] = useState([]);
   const [chargement, setChargement] = useState(true);
+  const [onglet, setOnglet] = useState("formations");
+  const [evaluationEnEdition, setEvaluationEnEdition] = useState(null);
+  const [modalNouvelleEvaluation, setModalNouvelleEvaluation] = useState(false);
+  const [nouvelleNote, setNouvelleNote] = useState({ dateNote: new Date().toISOString().slice(0, 10), contenu: "" });
+  const [ajoutNoteEnCours, setAjoutNoteEnCours] = useState(false);
 
-  useEffect(() => {
-    (async () => {
-      setChargement(true);
-      const reponse = await appelApi(`/participants/${participantId}`, { token });
-      if (reponse.ok) setParticipant(reponse.data);
-      setChargement(false);
-    })();
+  const charger = useCallback(async () => {
+    setChargement(true);
+    const [reponseParticipant, reponseEvaluations, reponseNotes, reponseStructure] = await Promise.all([
+      appelApi(`/participants/${participantId}`, { token }),
+      appelApi(`/participants/${participantId}/evaluations-abf`, { token }),
+      appelApi(`/participants/${participantId}/notes-suivi`, { token }),
+      appelApi("/abf/structure", { token }),
+    ]);
+    if (reponseParticipant.ok) setParticipant(reponseParticipant.data);
+    if (reponseEvaluations.ok) setEvaluations(reponseEvaluations.data);
+    if (reponseNotes.ok) setNotes(reponseNotes.data);
+    if (reponseStructure.ok) {
+      ABF_RUBRIQUES = reponseStructure.data.rubriques;
+      ABF_DOMAINES = reponseStructure.data.domainesBesoinFormation;
+      ABF_MOMENTS = reponseStructure.data.moments;
+    }
+    setChargement(false);
   }, [participantId, token]);
 
+  useEffect(() => {
+    charger();
+  }, [charger]);
+
+  const supprimerEvaluation = async (evaluation) => {
+    if (!confirm("Supprimer cette évaluation ABF ?")) return;
+    const reponse = await appelApi(`/participants/${participantId}/evaluations-abf/${evaluation.id}`, {
+      method: "DELETE",
+      token,
+    });
+    if (reponse.ok) charger();
+    else alert(reponse.data?.error || "Impossible de supprimer cette évaluation.");
+  };
+
+  const ajouterNote = async () => {
+    if (!nouvelleNote.contenu.trim()) return;
+    setAjoutNoteEnCours(true);
+    const reponse = await appelApi(`/participants/${participantId}/notes-suivi`, {
+      method: "POST",
+      body: nouvelleNote,
+      token,
+    });
+    setAjoutNoteEnCours(false);
+    if (reponse.ok) {
+      setNouvelleNote({ dateNote: new Date().toISOString().slice(0, 10), contenu: "" });
+      charger();
+    } else {
+      alert(reponse.data?.error || "Impossible d'ajouter cette note.");
+    }
+  };
+
+  const supprimerNote = async (note) => {
+    if (!confirm("Supprimer cette note de suivi ?")) return;
+    const reponse = await appelApi(`/participants/${participantId}/notes-suivi/${note.id}`, {
+      method: "DELETE",
+      token,
+    });
+    if (reponse.ok) charger();
+    else alert(reponse.data?.error || "Impossible de supprimer cette note.");
+  };
+
+  const ONGLETS = [
+    { id: "formations", label: "Formations", icone: <GraduationCap size={14} /> },
+    { id: "abf", label: "Évaluations ABF", icone: <ClipboardList size={14} /> },
+    { id: "suivi", label: "Notes de suivi", icone: <StickyNote size={14} /> },
+  ];
+
   return (
-    <Modal titre="Historique de formation" onFermer={onFermer} large>
+    <Modal titre={participant ? participant.nom : "Fiche participant"} onFermer={onFermer} large>
       {chargement ? (
         <div className="flex justify-center py-8">
           <Loader2 className="animate-spin text-slate-400" />
@@ -425,44 +504,332 @@ function ModalDetailParticipant({ participantId, onFermer, token }) {
         <p className="text-sm text-slate-500">Participant introuvable.</p>
       ) : (
         <div className="space-y-4">
-          <div>
-            <h3 className="text-base font-semibold text-slate-800">{participant.nom}</h3>
-            <p className="text-sm text-slate-500">
-              {[participant.nomEntreprise, participant.localite].filter(Boolean).join(" · ") || "—"}
-            </p>
+          <p className="text-sm text-slate-500">
+            {[participant.nomEntreprise, participant.localite].filter(Boolean).join(" · ") || "—"}
+          </p>
+
+          <div className="flex gap-1 border-b border-slate-100">
+            {ONGLETS.map((o) => (
+              <button
+                key={o.id}
+                onClick={() => setOnglet(o.id)}
+                className={`flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium ${
+                  onglet === o.id
+                    ? "border-slate-800 text-slate-800"
+                    : "border-transparent text-slate-400 hover:text-slate-600"
+                }`}
+              >
+                {o.icone} {o.label}
+              </button>
+            ))}
           </div>
-          {participant.participations.length === 0 ? (
-            <p className="rounded-lg bg-slate-50 px-3 py-4 text-center text-sm text-slate-400">
-              Aucune formation suivie pour le moment.
-            </p>
-          ) : (
-            <ul className="divide-y divide-slate-100 rounded-lg border border-slate-100">
-              {participant.participations.map((p) => (
-                <li key={p.id} className="flex items-center justify-between px-4 py-3">
-                  <div>
-                    <p className="text-sm font-medium text-slate-700">
-                      {MODULES_GERME_LABEL[p.formation.module] || p.formation.module}
-                    </p>
-                    <p className="text-xs text-slate-400">
-                      {FormatDate(p.formation.date)} {p.formation.lieu ? `· ${p.formation.lieu}` : ""}
-                    </p>
-                    {p.appreciation && <p className="mt-1 text-xs text-slate-500">« {p.appreciation} »</p>}
+
+          {onglet === "formations" &&
+            (participant.participations.length === 0 ? (
+              <p className="rounded-lg bg-slate-50 px-3 py-4 text-center text-sm text-slate-400">
+                Aucune formation suivie pour le moment.
+              </p>
+            ) : (
+              <ul className="divide-y divide-slate-100 rounded-lg border border-slate-100">
+                {participant.participations.map((p) => (
+                  <li key={p.id} className="flex items-center justify-between px-4 py-3">
+                    <div>
+                      <p className="text-sm font-medium text-slate-700">
+                        {MODULES_GERME_LABEL[p.formation.module] || p.formation.module}
+                      </p>
+                      <p className="text-xs text-slate-400">
+                        {FormatDate(p.formation.date)} {p.formation.lieu ? `· ${p.formation.lieu}` : ""}
+                      </p>
+                      {p.appreciation && <p className="mt-1 text-xs text-slate-500">« {p.appreciation} »</p>}
+                    </div>
+                    {p.present ? (
+                      <span className="flex items-center gap-1 text-xs text-emerald-600">
+                        <CheckCircle2 size={14} /> Présent
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1 text-xs text-slate-400">
+                        <Circle size={14} /> Absent
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            ))}
+
+          {onglet === "abf" && (
+            <div className="space-y-3">
+              <div className="flex justify-end">
+                <Bouton onClick={() => setModalNouvelleEvaluation(true)}>
+                  <Plus size={16} /> Nouvelle évaluation
+                </Bouton>
+              </div>
+              {evaluations.length === 0 ? (
+                <p className="rounded-lg bg-slate-50 px-3 py-4 text-center text-sm text-slate-400">
+                  Aucune évaluation ABF enregistrée pour le moment.
+                </p>
+              ) : (
+                evaluations.map((e) => (
+                  <div key={e.id} className="rounded-xl border border-slate-100 p-4">
+                    <div className="mb-2 flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-700">{e.moment}</p>
+                        <p className="text-xs text-slate-400">{FormatDate(e.dateEvaluation)}</p>
+                      </div>
+                      <MenuActions
+                        actions={[
+                          { label: "Modifier", icone: <Pencil size={14} />, onClick: () => setEvaluationEnEdition(e) },
+                          {
+                            label: "Supprimer",
+                            icone: <Trash2 size={14} />,
+                            danger: true,
+                            onClick: () => supprimerEvaluation(e),
+                          },
+                        ]}
+                      />
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {Object.entries(e.niveaux).map(([rubriqueId, niveau]) => (
+                        <span key={rubriqueId} className="flex items-center gap-1 text-xs text-slate-500">
+                          {libelleRubriqueAbf(rubriqueId)} <NiveauBadge niveau={niveau} />
+                        </span>
+                      ))}
+                    </div>
+                    {(e.besoinsDomaines.length > 0 || e.besoinsAutre) && (
+                      <p className="mt-2 text-xs text-slate-500">
+                        Besoins identifiés :{" "}
+                        {[...e.besoinsDomaines.map(libelleDomaineBesoin), e.besoinsAutre].filter(Boolean).join(", ")}
+                      </p>
+                    )}
                   </div>
-                  {p.present ? (
-                    <span className="flex items-center gap-1 text-xs text-emerald-600">
-                      <CheckCircle2 size={14} /> Présent
-                    </span>
-                  ) : (
-                    <span className="flex items-center gap-1 text-xs text-slate-400">
-                      <Circle size={14} /> Absent
-                    </span>
-                  )}
-                </li>
-              ))}
-            </ul>
+                ))
+              )}
+            </div>
+          )}
+
+          {onglet === "suivi" && (
+            <div className="space-y-3">
+              <div className="rounded-xl border border-slate-100 p-4">
+                <Zone
+                  label="Nouvelle note"
+                  placeholder="Ce qui a été observé lors de la visite de suivi..."
+                  value={nouvelleNote.contenu}
+                  onChange={(e) => setNouvelleNote((n) => ({ ...n, contenu: e.target.value }))}
+                />
+                <div className="mt-2 flex items-center justify-between">
+                  <input
+                    type="date"
+                    value={nouvelleNote.dateNote}
+                    onChange={(e) => setNouvelleNote((n) => ({ ...n, dateNote: e.target.value }))}
+                    className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm outline-none focus:border-slate-400"
+                  />
+                  <Bouton onClick={ajouterNote} disabled={ajoutNoteEnCours}>
+                    {ajoutNoteEnCours ? <Loader2 size={16} className="animate-spin" /> : "Ajouter"}
+                  </Bouton>
+                </div>
+              </div>
+              {notes.length === 0 ? (
+                <p className="rounded-lg bg-slate-50 px-3 py-4 text-center text-sm text-slate-400">
+                  Aucune note de suivi pour le moment.
+                </p>
+              ) : (
+                <ul className="divide-y divide-slate-100 rounded-lg border border-slate-100">
+                  {notes.map((n) => (
+                    <li key={n.id} className="flex items-start justify-between gap-3 px-4 py-3">
+                      <div>
+                        <p className="text-xs text-slate-400">{FormatDate(n.dateNote)}</p>
+                        <p className="text-sm text-slate-600">{n.contenu}</p>
+                      </div>
+                      <button
+                        onClick={() => supprimerNote(n)}
+                        className="shrink-0 rounded-lg p-1.5 text-slate-300 hover:bg-slate-100 hover:text-rose-600"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           )}
         </div>
       )}
+
+      {(modalNouvelleEvaluation || evaluationEnEdition) && (
+        <ModalEvaluationAbf
+          participantId={participantId}
+          evaluation={evaluationEnEdition}
+          onFermer={() => {
+            setModalNouvelleEvaluation(false);
+            setEvaluationEnEdition(null);
+          }}
+          onEnregistre={() => {
+            setModalNouvelleEvaluation(false);
+            setEvaluationEnEdition(null);
+            charger();
+          }}
+          token={token}
+        />
+      )}
+    </Modal>
+  );
+}
+
+// Rempli dynamiquement dès qu'une fiche participant est ouverte, pour que la structure du
+// questionnaire ABF reste définie à un seul endroit : le serveur (src/lib/questionnaireAbf.js).
+let ABF_RUBRIQUES = [];
+let ABF_DOMAINES = [];
+let ABF_MOMENTS = ["Avant formation", "Après formation"];
+
+function ModalEvaluationAbf({ participantId, evaluation, onFermer, onEnregistre, token }) {
+  const [valeurs, setValeurs] = useState(() =>
+    evaluation
+      ? {
+          moment: evaluation.moment,
+          dateEvaluation: evaluation.dateEvaluation.slice(0, 10),
+          reponses: evaluation.reponses || {},
+          besoinsDomaines: evaluation.besoinsDomaines || [],
+          besoinsAutre: evaluation.besoinsAutre || "",
+        }
+      : {
+          moment: ABF_MOMENTS[0],
+          dateEvaluation: new Date().toISOString().slice(0, 10),
+          reponses: {},
+          besoinsDomaines: [],
+          besoinsAutre: "",
+        }
+  );
+  const [enregistrement, setEnregistrement] = useState(false);
+  const [erreur, setErreur] = useState("");
+
+  const choisirReponse = (idQuestion, index) => {
+    setValeurs((v) => ({ ...v, reponses: { ...v.reponses, [idQuestion]: index } }));
+  };
+
+  const basculerDomaine = (idDomaine) => {
+    setValeurs((v) => ({
+      ...v,
+      besoinsDomaines: v.besoinsDomaines.includes(idDomaine)
+        ? v.besoinsDomaines.filter((d) => d !== idDomaine)
+        : [...v.besoinsDomaines, idDomaine],
+    }));
+  };
+
+  const enregistrer = async () => {
+    setEnregistrement(true);
+    setErreur("");
+    const corps = {
+      moment: valeurs.moment,
+      dateEvaluation: valeurs.dateEvaluation,
+      reponses: valeurs.reponses,
+      besoinsDomaines: valeurs.besoinsDomaines,
+      besoinsAutre: valeurs.besoinsAutre.trim() || null,
+    };
+    const reponse = evaluation
+      ? await appelApi(`/participants/${participantId}/evaluations-abf/${evaluation.id}`, {
+          method: "PUT",
+          body: corps,
+          token,
+        })
+      : await appelApi(`/participants/${participantId}/evaluations-abf`, { method: "POST", body: corps, token });
+    setEnregistrement(false);
+    if (reponse.ok) onEnregistre();
+    else setErreur(reponse.data?.error || "Impossible d'enregistrer cette évaluation.");
+  };
+
+  const nombreQuestions = ABF_RUBRIQUES.reduce((n, r) => n + r.questions.length, 0);
+  const nombreRepondues = Object.keys(valeurs.reponses).length;
+
+  return (
+    <Modal titre={evaluation ? "Modifier l'évaluation ABF" : "Nouvelle évaluation ABF"} onFermer={onFermer} large>
+      <div className="space-y-5">
+        <div className="grid grid-cols-2 gap-3">
+          <Selecteur
+            label="Moment"
+            value={valeurs.moment}
+            onChange={(e) => setValeurs((v) => ({ ...v, moment: e.target.value }))}
+          >
+            {ABF_MOMENTS.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </Selecteur>
+          <Champ
+            label="Date"
+            type="date"
+            value={valeurs.dateEvaluation}
+            onChange={(e) => setValeurs((v) => ({ ...v, dateEvaluation: e.target.value }))}
+          />
+        </div>
+
+        <p className="text-xs text-slate-400">
+          {nombreRepondues} / {nombreQuestions} questions répondues.
+        </p>
+
+        {ABF_RUBRIQUES.map((rubrique) => (
+          <div key={rubrique.rubriqueId} className="rounded-xl border border-slate-100 p-4">
+            <h4 className="mb-3 text-sm font-semibold text-slate-700">{rubrique.titre}</h4>
+            <div className="space-y-4">
+              {rubrique.questions.map((question) => (
+                <div key={question.id}>
+                  <p className="mb-1.5 text-sm text-slate-600">{question.texte}</p>
+                  <div className="space-y-1">
+                    {question.options.map((option, index) => (
+                      <label key={index} className="flex cursor-pointer items-start gap-2 text-sm text-slate-600">
+                        <input
+                          type="radio"
+                          name={question.id}
+                          checked={valeurs.reponses[question.id] === index}
+                          onChange={() => choisirReponse(question.id, index)}
+                          className="mt-0.5"
+                        />
+                        {option}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+
+        <div className="rounded-xl border border-slate-100 p-4">
+          <h4 className="mb-1 text-sm font-semibold text-slate-700">Analyse des besoins en formation</h4>
+          <p className="mb-2 text-sm text-slate-500">
+            Quels domaines nécessitent une amélioration ou des formations ?
+          </p>
+          <div className="space-y-1">
+            {ABF_DOMAINES.map((domaine) => (
+              <label key={domaine.id} className="flex items-center gap-2 text-sm text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={valeurs.besoinsDomaines.includes(domaine.id)}
+                  onChange={() => basculerDomaine(domaine.id)}
+                />
+                {domaine.label}
+              </label>
+            ))}
+          </div>
+          <div className="mt-3">
+            <Champ
+              label="Autre (précisez)"
+              value={valeurs.besoinsAutre}
+              onChange={(e) => setValeurs((v) => ({ ...v, besoinsAutre: e.target.value }))}
+            />
+          </div>
+        </div>
+
+        {erreur && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">{erreur}</p>}
+
+        <div className="flex justify-end gap-2">
+          <Bouton variante="discret" onClick={onFermer}>
+            Annuler
+          </Bouton>
+          <Bouton onClick={enregistrer} disabled={enregistrement}>
+            {enregistrement ? <Loader2 size={16} className="animate-spin" /> : "Enregistrer"}
+          </Bouton>
+        </div>
+      </div>
     </Modal>
   );
 }
