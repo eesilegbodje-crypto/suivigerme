@@ -18,6 +18,7 @@ import {
   Circle,
   ClipboardList,
   StickyNote,
+  Sparkles,
 } from "lucide-react";
 import { appelApi, lireSession, ecrireSession } from "./lib/api";
 
@@ -427,6 +428,7 @@ function ModalDetailParticipant({ participantId, onFermer, token }) {
   const [modalNouvelleEvaluation, setModalNouvelleEvaluation] = useState(false);
   const [nouvelleNote, setNouvelleNote] = useState({ dateNote: new Date().toISOString().slice(0, 10), contenu: "" });
   const [ajoutNoteEnCours, setAjoutNoteEnCours] = useState(false);
+  const [diagnosticsEnCours, setDiagnosticsEnCours] = useState({});
 
   const charger = useCallback(async () => {
     setChargement(true);
@@ -486,6 +488,17 @@ function ModalDetailParticipant({ participantId, onFermer, token }) {
     });
     if (reponse.ok) charger();
     else alert(reponse.data?.error || "Impossible de supprimer cette note.");
+  };
+
+  const genererDiagnostic = async (evaluation) => {
+    setDiagnosticsEnCours((d) => ({ ...d, [evaluation.id]: true }));
+    const reponse = await appelApi(`/participants/${participantId}/evaluations-abf/${evaluation.id}/diagnostic-ia`, {
+      method: "POST",
+      token,
+    });
+    setDiagnosticsEnCours((d) => ({ ...d, [evaluation.id]: false }));
+    if (reponse.ok) charger();
+    else alert(reponse.data?.error || "Le diagnostic IA est momentanément indisponible.");
   };
 
   const ONGLETS = [
@@ -600,6 +613,72 @@ function ModalDetailParticipant({ participantId, onFermer, token }) {
                         {[...e.besoinsDomaines.map(libelleDomaineBesoin), e.besoinsAutre].filter(Boolean).join(", ")}
                       </p>
                     )}
+
+                    <div className="mt-3 border-t border-slate-100 pt-3">
+                      {e.diagnosticIa ? (
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <p className="text-xs font-semibold text-slate-600">
+                              Diagnostic IA <span className="font-normal text-slate-400">· {FormatDate(e.diagnosticGenereLe)}</span>
+                            </p>
+                            <button
+                              onClick={() => genererDiagnostic(e)}
+                              disabled={diagnosticsEnCours[e.id]}
+                              className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-600 disabled:opacity-50"
+                            >
+                              {diagnosticsEnCours[e.id] ? (
+                                <Loader2 size={12} className="animate-spin" />
+                              ) : (
+                                <Sparkles size={12} />
+                              )}
+                              Régénérer
+                            </button>
+                          </div>
+                          <p className="text-sm text-slate-600">{e.diagnosticIa.diagnostic}</p>
+                          {e.diagnosticIa.problemesIdentifies?.length > 0 && (
+                            <div>
+                              <p className="text-xs font-medium text-slate-500">Problèmes identifiés</p>
+                              <ul className="ml-4 list-disc text-sm text-slate-600">
+                                {e.diagnosticIa.problemesIdentifies.map((p, i) => (
+                                  <li key={i}>{p}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                          {e.diagnosticIa.formationsRecommandees?.length > 0 && (
+                            <div>
+                              <p className="text-xs font-medium text-slate-500">Formations à prioriser</p>
+                              <div className="mt-1 flex flex-wrap gap-1.5">
+                                {e.diagnosticIa.formationsRecommandees.map((id) => (
+                                  <Badge key={id} couleur="slate">
+                                    {libelleRubriqueAbf(id)}
+                                  </Badge>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {e.diagnosticIa.actionsCorrectives?.length > 0 && (
+                            <div>
+                              <p className="text-xs font-medium text-slate-500">Actions correctives</p>
+                              <ul className="ml-4 list-disc text-sm text-slate-600">
+                                {e.diagnosticIa.actionsCorrectives.map((a, i) => (
+                                  <li key={i}>{a}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <Bouton variante="discret" onClick={() => genererDiagnostic(e)} disabled={diagnosticsEnCours[e.id]}>
+                          {diagnosticsEnCours[e.id] ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : (
+                            <Sparkles size={14} />
+                          )}
+                          Générer le diagnostic IA
+                        </Bouton>
+                      )}
+                    </div>
                   </div>
                 ))
               )}
