@@ -29,6 +29,11 @@ import {
   ArrowUp,
   ArrowDown,
   Minus,
+  Target,
+  Gauge,
+  BarChart3,
+  Percent,
+  Clock,
 } from "lucide-react";
 import { appelApi, lireSession, ecrireSession } from "./lib/api";
 
@@ -585,6 +590,7 @@ function MisEnPage({ session, page, onChangerPage, onDeconnexion, children }) {
   const items = [
     { id: "participants", label: "Participants", icone: <Users size={18} /> },
     { id: "formations", label: "Formations", icone: <GraduationCap size={18} /> },
+    { id: "suivi-evaluation", label: "Suivi-évaluation", icone: <Target size={18} /> },
   ];
   if (session.user.role === "coordonnateur") {
     items.push({ id: "comptes", label: "Comptes", icone: <KeyRound size={18} /> });
@@ -3085,6 +3091,242 @@ function PageComptes({ token }) {
   );
 }
 
+function PageSuiviEvaluation({ token }) {
+  const [periode, setPeriode] = useState("30j");
+  const [donnees, setDonnees] = useState(null);
+  const [chargement, setChargement] = useState(true);
+  const [erreur, setErreur] = useState("");
+
+  const charger = useCallback(async () => {
+    setChargement(true);
+    setErreur("");
+    const reponse = await appelApi(`/suivi-evaluation?periode=${periode}`, { token });
+    if (reponse.ok) setDonnees(reponse.data);
+    else if (reponse.erreurReseau) setErreur("Impossible de contacter le serveur.");
+    setChargement(false);
+  }, [token, periode]);
+
+  useEffect(() => {
+    charger();
+  }, [charger]);
+
+  const formatNombre = (valeur, decimales = 0) =>
+    valeur === null || valeur === undefined ? "—" : valeur.toFixed(decimales);
+
+  const formatPourcentage = (valeur) =>
+    valeur === null || valeur === undefined ? "—" : `${Math.round(valeur)}%`;
+
+  const formatEvolution = (valeur, unite = "") => {
+    if (valeur === null || valeur === undefined) {
+      return (
+        <span className="flex items-center gap-1 text-slate-400">
+          <Minus size={14} /> Pas assez de données
+        </span>
+      );
+    }
+    const arrondi = Math.round(valeur * 10) / 10;
+    if (arrondi > 0) {
+      return (
+        <span className="flex items-center gap-1 font-medium text-emerald-600">
+          <ArrowUp size={14} /> +{arrondi}
+          {unite}
+        </span>
+      );
+    }
+    if (arrondi < 0) {
+      return (
+        <span className="flex items-center gap-1 font-medium text-rose-600">
+          <ArrowDown size={14} /> {arrondi}
+          {unite}
+        </span>
+      );
+    }
+    return (
+      <span className="flex items-center gap-1 text-slate-400">
+        <Minus size={14} /> 0{unite}
+      </span>
+    );
+  };
+
+  return (
+    <div className="mx-auto max-w-6xl">
+      <div className="mb-6 flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-semibold text-slate-800">Suivi-évaluation</h1>
+          <p className="text-sm text-slate-500">
+            Le suivi et l'évaluation de vos propres actions d'accompagnement, calculés uniquement à
+            partir des PME que vous suivez.
+          </p>
+        </div>
+      </div>
+
+      {erreur && <p className="mb-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">{erreur}</p>}
+
+      {chargement || !donnees ? (
+        <div className="flex justify-center py-16 text-slate-400">
+          <Loader2 className="animate-spin" />
+        </div>
+      ) : (
+        <div className="space-y-8">
+          <section>
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                <BarChart3 size={16} /> Activité de terrain
+              </h2>
+              <select
+                value={periode}
+                onChange={(e) => setPeriode(e.target.value)}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm outline-none focus:border-slate-400"
+              >
+                <option value="7j">7 derniers jours</option>
+                <option value="30j">30 derniers jours</option>
+                <option value="3m">3 derniers mois</option>
+                <option value="tout">Depuis le début</option>
+              </select>
+            </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <CarteStat
+                icone={<Users size={18} />}
+                label="PME actives"
+                valeur={donnees.activiteTerrain.nombrePmeActives}
+                couleur="slate"
+              />
+              <CarteStat
+                icone={<StickyNote size={18} />}
+                label="Notes de suivi (période)"
+                valeur={donnees.activiteTerrain.nombreNotesSuivi}
+                couleur="emerald"
+              />
+              <CarteStat
+                icone={<GraduationCap size={18} />}
+                label="Formations organisées (période)"
+                valeur={donnees.activiteTerrain.nombreFormations}
+                couleur="amber"
+              />
+              <CarteStat
+                icone={<UserPlus size={18} />}
+                label="Inscriptions (période)"
+                valeur={donnees.activiteTerrain.nombreInscriptions}
+                couleur="slate"
+              />
+            </div>
+          </section>
+
+          <section>
+            <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold text-slate-700">
+              <Gauge size={16} /> Qualité de l'accompagnement
+            </h2>
+            <p className="mb-3 text-xs text-slate-400">
+              Calculé sur l'ensemble de votre plan d'accompagnement, toutes périodes confondues.
+            </p>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <CarteStat
+                icone={<CheckCircle2 size={18} />}
+                label="Taux d'actions réalisées"
+                valeur={formatPourcentage(donnees.qualiteAccompagnement.tauxReussite)}
+                couleur="emerald"
+              />
+              <CarteStat
+                icone={<AlertTriangle size={18} />}
+                label="Actions en retard"
+                valeur={donnees.qualiteAccompagnement.nombreEnRetard}
+                couleur="rose"
+              />
+              <CarteStat
+                icone={<Calendar size={18} />}
+                label="Échéance proche (3 j)"
+                valeur={donnees.qualiteAccompagnement.nombreEcheanceProche}
+                couleur="amber"
+              />
+              <CarteStat
+                icone={<Clock size={18} />}
+                label="Délai moyen de traitement"
+                valeur={
+                  donnees.qualiteAccompagnement.delaiMoyenTraitementJours !== null
+                    ? `${formatNombre(donnees.qualiteAccompagnement.delaiMoyenTraitementJours, 1)} j`
+                    : "—"
+                }
+                couleur="slate"
+              />
+            </div>
+          </section>
+
+          <section>
+            <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold text-slate-700">
+              <Target size={16} /> Résultats obtenus par les PME
+            </h2>
+            <p className="mb-3 text-xs text-slate-400">
+              Progression mesurée depuis le début de l'accompagnement de chaque PME.
+            </p>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="rounded-2xl border border-slate-100 bg-white p-4">
+                <p className="mb-1 text-xs text-slate-500">
+                  Progression ABF moyenne ({donnees.resultatsPme.nombrePmeAvecProgressionAbf} PME avec
+                  évaluations avant/après)
+                </p>
+                <p className="text-lg">{formatEvolution(donnees.resultatsPme.progressionAbfMoyenne, " niv./5")}</p>
+              </div>
+              <div className="rounded-2xl border border-slate-100 bg-white p-4">
+                <p className="mb-1 text-xs text-slate-500">
+                  Évolution moyenne du bénéfice net ({donnees.resultatsPme.nombrePmeAvecEvolutionFinanciere} PME
+                  avec au moins 2 relevés)
+                </p>
+                <p className="text-lg">{formatEvolution(donnees.resultatsPme.evolutionBeneficeMoyenne)}</p>
+              </div>
+            </div>
+            <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <CarteStat
+                icone={<CheckCircle2 size={18} />}
+                label="PME en RAS"
+                valeur={donnees.resultatsPme.repartitionBadges.vert}
+                couleur="emerald"
+              />
+              <CarteStat
+                icone={<TrendingUp size={18} />}
+                label="PME à surveiller"
+                valeur={donnees.resultatsPme.repartitionBadges.orange}
+                couleur="amber"
+              />
+              <CarteStat
+                icone={<AlertTriangle size={18} />}
+                label="PME en vigilance"
+                valeur={donnees.resultatsPme.repartitionBadges.rouge}
+                couleur="rose"
+              />
+            </div>
+          </section>
+
+          <section>
+            <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-700">
+              <Percent size={16} /> Couverture du diagnostic
+            </h2>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <CarteStat
+                icone={<ClipboardList size={18} />}
+                label="PME avec évaluation ABF"
+                valeur={formatPourcentage(donnees.couvertureDiagnostic.pourcentageAvecAbf)}
+                couleur="slate"
+              />
+              <CarteStat
+                icone={<ClipboardList size={18} />}
+                label="PME avec ABF avant/après"
+                valeur={formatPourcentage(donnees.couvertureDiagnostic.pourcentageAvecAbfComplet)}
+                couleur="emerald"
+              />
+              <CarteStat
+                icone={<ListChecks size={18} />}
+                label="PME avec plan d'accompagnement"
+                valeur={formatPourcentage(donnees.couvertureDiagnostic.pourcentageAvecPlan)}
+                couleur="amber"
+              />
+            </div>
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ============================================================================
 // Application
 // ============================================================================
@@ -3121,6 +3363,7 @@ export default function App() {
       {page === "participants" && <PageParticipants token={session.token} />}
       {page === "formations" && <PageFormations token={session.token} />}
       {page === "comptes" && session.user.role === "coordonnateur" && <PageComptes token={session.token} />}
+      {page === "suivi-evaluation" && <PageSuiviEvaluation token={session.token} />}
     </MisEnPage>
   );
 }
