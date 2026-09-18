@@ -17,3 +17,6 @@ dist-ssr
 # Variables d'environnement (jamais sur GitHub)
 .env
 .env.local
+
+# Fichiers generes par le service worker en mode developpement (vite-plugin-pwa)
+dev-dist

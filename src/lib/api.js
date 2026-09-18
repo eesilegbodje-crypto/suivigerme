@@ -1,6 +1,7 @@
 // Petit module central pour tous les appels au serveur (API).
 // Objectif : un seul endroit à modifier si l'adresse du serveur change, et un seul endroit
 // qui sait comment ajouter le jeton de connexion (token) aux requêtes.
+import { cheminEstSynchronisable } from "./syncHorsLigne.js";
 
 export const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4100";
 
@@ -50,6 +51,22 @@ export async function appelApi(chemin, { method = "GET", body, token } = {}) {
 
     return { ok: reponse.ok, status: reponse.status, data };
   } catch (erreur) {
+    // Chantier "visites de terrain hors-ligne", étape 3 : pour les actions qu'on autorise à
+    // saisir hors connexion (voir syncHorsLigne.js), le service worker (vite.config.js) a déjà
+    // mis cette requête en file d'attente pour un envoi automatique dès que la connexion
+    // reviendra — ce n'est donc pas un échec définitif, on l'indique clairement plutôt que
+    // d'afficher un simple message d'erreur réseau.
+    if (cheminEstSynchronisable(chemin, method)) {
+      return {
+        ok: false,
+        status: 0,
+        data: {
+          error:
+            "Vous êtes hors connexion : cette action a été enregistrée et sera envoyée automatiquement dès que la connexion reviendra. Vous pouvez fermer cette fenêtre.",
+        },
+        enAttente: true,
+      };
+    }
     // Erreur réseau (serveur injoignable, pas de connexion internet...).
     console.error("Erreur d'appel API :", chemin, erreur);
     return { ok: false, status: 0, data: null, erreurReseau: true };

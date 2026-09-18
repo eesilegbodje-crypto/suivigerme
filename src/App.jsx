@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { createPortal } from "react-dom";
 import {
   LogOut,
@@ -19,6 +19,15 @@ import {
   ClipboardList,
   StickyNote,
   Sparkles,
+  BookOpen,
+  Calculator,
+  KeyRound,
+  ListChecks,
+  TrendingUp,
+  AlertTriangle,
+  ArrowUp,
+  ArrowDown,
+  Minus,
 } from "lucide-react";
 import { appelApi, lireSession, ecrireSession } from "./lib/api";
 
@@ -93,10 +102,74 @@ function Badge({ children, couleur = "slate" }) {
   );
 }
 
+// Petite carte resume (icone + chiffre + libelle) utilisee en haut des pages de liste pour donner
+// un vrai contenu a l'espace au-dessus du tableau, plutot que de laisser un grand vide.
+function CarteStat({ icone, label, valeur, couleur = "slate" }) {
+  const styles = {
+    slate: "bg-slate-100 text-slate-600",
+    emerald: "bg-emerald-100 text-emerald-700",
+    rose: "bg-rose-100 text-rose-700",
+    amber: "bg-amber-100 text-amber-700",
+  };
+  return (
+    <div className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-white p-4">
+      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${styles[couleur]}`}>
+        {icone}
+      </div>
+      <div>
+        <p className="text-xl font-semibold text-slate-800">{valeur}</p>
+        <p className="text-xs text-slate-500">{label}</p>
+      </div>
+    </div>
+  );
+}
+
 function couleurStatutParticipant(statut) {
   if (statut === "Actif") return "emerald";
   if (statut === "Abandon") return "rose";
   return "slate";
+}
+
+function couleurSante(badge) {
+  if (badge === "rouge") return "rose";
+  if (badge === "orange") return "amber";
+  return "emerald";
+}
+
+function libelleSante(badge) {
+  if (badge === "rouge") return "Vigilance";
+  if (badge === "orange") return "À surveiller";
+  return "RAS";
+}
+
+const STATUTS_ACTION = ["À faire", "En cours", "Réalisée", "Partiellement réalisée", "Abandonnée"];
+
+function couleurStatutAction(statut) {
+  if (statut === "Réalisée") return "emerald";
+  if (statut === "Abandonnée") return "rose";
+  if (statut === "En cours" || statut === "Partiellement réalisée") return "amber";
+  return "slate";
+}
+
+function estActionEnRetard(action) {
+  if (action.statut === "Réalisée" || action.statut === "Abandonnée") return false;
+  const aujourdHui = new Date();
+  aujourdHui.setHours(0, 0, 0, 0);
+  return new Date(action.echeance) < aujourdHui;
+}
+
+// Alerte préventive : action pas encore en retard, mais dont l'échéance tombe dans les 7
+// prochains jours (délai choisi par défaut, modifiable si besoin).
+const DELAI_ALERTE_ECHEANCE_JOURS = 7;
+
+function estActionBientotEnRetard(action) {
+  if (action.statut === "Réalisée" || action.statut === "Abandonnée") return false;
+  const aujourdHui = new Date();
+  aujourdHui.setHours(0, 0, 0, 0);
+  const dansXJours = new Date(aujourdHui);
+  dansXJours.setDate(dansXJours.getDate() + DELAI_ALERTE_ECHEANCE_JOURS);
+  const echeance = new Date(action.echeance);
+  return echeance >= aujourdHui && echeance <= dansXJours;
 }
 
 function Modal({ titre, onFermer, children, large = false }) {
@@ -215,6 +288,115 @@ function FormatDate(dateIso) {
   }
 }
 
+function FormatMontant(valeur) {
+  if (valeur === null || valeur === undefined || Number.isNaN(valeur)) return "—";
+  return `${Math.round(valeur).toLocaleString("fr-FR")} FCFA`;
+}
+
+function FormatMois(dateIso) {
+  if (!dateIso) return "—";
+  try {
+    const libelle = new Date(dateIso).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+    return libelle.charAt(0).toUpperCase() + libelle.slice(1);
+  } catch {
+    return "—";
+  }
+}
+
+// Petit graphique en courbe (SVG fait main, pas de librairie externe) pour visualiser l'évolution
+// du bénéfice net d'une PME dans le temps. Une seule série : le titre au-dessus du graphique la
+// nomme, donc pas de légende séparée. Les points sont colorés selon le signe (vert = positif,
+// rose = négatif) pour renforcer visuellement la position par rapport à la ligne zéro, et seuls
+// le premier, le dernier, le minimum et le maximum sont étiquetés (jamais un chiffre par point).
+function GraphiqueBeneficeNet({ donnees }) {
+  const largeur = 640;
+  const hauteur = 200;
+  const marge = { haut: 24, bas: 24, gauche: 12, droite: 12 };
+  const largeurTrace = largeur - marge.gauche - marge.droite;
+  const hauteurTrace = hauteur - marge.haut - marge.bas;
+
+  const valeurs = donnees.map((d) => d.beneficeNet);
+  const minVal = Math.min(0, ...valeurs);
+  const maxVal = Math.max(0, ...valeurs);
+  const etendue = maxVal - minVal || 1;
+  const paddingY = etendue * 0.15;
+  const minAffiche = minVal - paddingY;
+  const maxAffiche = maxVal + paddingY;
+  const etendueAffichee = maxAffiche - minAffiche || 1;
+
+  const x = (i) =>
+    marge.gauche + (donnees.length > 1 ? (i / (donnees.length - 1)) * largeurTrace : largeurTrace / 2);
+  const y = (v) => marge.haut + hauteurTrace - ((v - minAffiche) / etendueAffichee) * hauteurTrace;
+  const yZero = y(0);
+
+  const points = donnees.map((d, i) => ({ ...d, x: x(i), y: y(d.beneficeNet) }));
+  const chemin = points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+
+  const indexMin = valeurs.indexOf(Math.min(...valeurs));
+  const indexMax = valeurs.indexOf(Math.max(...valeurs));
+  const indicesEtiquetes = new Set([0, donnees.length - 1, indexMin, indexMax]);
+  const pasEtiquetteMois = Math.max(1, Math.ceil(donnees.length / 8));
+
+  const formatCourt = (v) => Math.round(v).toLocaleString("fr-FR");
+
+  return (
+    <div className="rounded-lg border border-slate-100 p-3">
+      <svg viewBox={`0 0 ${largeur} ${hauteur}`} className="w-full" style={{ height: 180 }}>
+        <line
+          x1={marge.gauche}
+          y1={yZero}
+          x2={largeur - marge.droite}
+          y2={yZero}
+          stroke="#e2e8f0"
+          strokeWidth={1}
+          strokeDasharray="4 3"
+        />
+        <path d={chemin} fill="none" stroke="#475569" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+        {points.map((p, i) => (
+          <g key={i}>
+            <circle
+              cx={p.x}
+              cy={p.y}
+              r={4}
+              fill={p.beneficeNet >= 0 ? "#10b981" : "#f43f5e"}
+              stroke="#ffffff"
+              strokeWidth={1.5}
+            />
+            {indicesEtiquetes.has(i) && (
+              <text x={p.x} y={p.y - 8} textAnchor="middle" fontSize="9" fill="#475569">
+                {formatCourt(p.beneficeNet)}
+              </text>
+            )}
+            {i % pasEtiquetteMois === 0 && (
+              <text x={p.x} y={hauteur - 6} textAnchor="middle" fontSize="9" fill="#94a3b8">
+                {new Date(p.mois).toLocaleDateString("fr-FR", { month: "short", year: "2-digit" })}
+              </text>
+            )}
+          </g>
+        ))}
+      </svg>
+      <div className="mt-2 max-h-24 overflow-y-auto rounded border border-slate-100">
+        <table className="w-full text-left text-xs">
+          <tbody className="divide-y divide-slate-50">
+            {donnees.map((d, i) => (
+              <tr key={i}>
+                <td className="px-2 py-1 text-slate-500">{FormatMois(d.mois)}</td>
+                <td
+                  className={`px-2 py-1 text-right font-medium ${
+                    d.beneficeNet >= 0 ? "text-emerald-600" : "text-rose-600"
+                  }`}
+                >
+                  {FormatMontant(d.beneficeNet)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ============================================================================
 // Connexion
 // ============================================================================
@@ -253,7 +435,7 @@ function PageConnexion({ onConnecte }) {
           <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-900">
             <GraduationCap className="text-white" size={24} />
           </div>
-          <h1 className="text-lg font-semibold text-slate-800">SuiviGERME</h1>
+          <h1 className="text-lg font-semibold text-slate-800">SuiviPME</h1>
           <p className="mt-1 text-sm text-slate-500">Suivi des activités de formation GERME</p>
         </div>
         <form onSubmit={soumettre} className="space-y-4">
@@ -283,6 +465,9 @@ function MisEnPage({ session, page, onChangerPage, onDeconnexion, children }) {
     { id: "participants", label: "Participants", icone: <Users size={18} /> },
     { id: "formations", label: "Formations", icone: <GraduationCap size={18} /> },
   ];
+  if (session.user.role === "coordonnateur") {
+    items.push({ id: "comptes", label: "Comptes", icone: <KeyRound size={18} /> });
+  }
   return (
     <div className="flex min-h-screen bg-slate-50">
       <aside className="flex w-60 shrink-0 flex-col border-r border-slate-100 bg-white">
@@ -290,7 +475,7 @@ function MisEnPage({ session, page, onChangerPage, onDeconnexion, children }) {
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-900">
             <GraduationCap className="text-white" size={18} />
           </div>
-          <span className="text-sm font-semibold text-slate-800">SuiviGERME</span>
+          <span className="text-sm font-semibold text-slate-800">SuiviPME</span>
         </div>
         <nav className="flex-1 space-y-1 p-3">
           {items.map((item) => (
@@ -406,8 +591,21 @@ function ModalParticipant({ participant, onFermer, onEnregistre, token }) {
 }
 
 function NiveauBadge({ niveau }) {
-  const couleurs = { Bon: "emerald", Moyen: "amber", Faible: "rose" };
-  return <Badge couleur={couleurs[niveau] || "slate"}>{niveau}</Badge>;
+  const couleurs = {
+    Prioritaire: "rose",
+    "À renforcer": "amber",
+    "À consolider": "amber",
+    Solide: "emerald",
+    Structuré: "emerald",
+  };
+  if (!niveau || niveau.niveau === null || niveau.niveau === undefined) {
+    return <Badge couleur="slate">Non renseigné</Badge>;
+  }
+  return (
+    <Badge couleur={couleurs[niveau.libelle] || "slate"}>
+      {niveau.niveau}/5 · {niveau.libelle}
+    </Badge>
+  );
 }
 
 function libelleRubriqueAbf(rubriqueId) {
@@ -417,6 +615,14 @@ function libelleRubriqueAbf(rubriqueId) {
 function libelleDomaineBesoin(domaineId) {
   return ABF_DOMAINES.find((d) => d.id === domaineId)?.label || domaineId;
 }
+
+const REGISTRES_SUIVIS = [
+  { champ: "registreVentes", label: "Ventes" },
+  { champ: "registreAchats", label: "Achats" },
+  { champ: "registreCaisse", label: "Caisse" },
+  { champ: "registreCreances", label: "Créances" },
+  { champ: "registreActifs", label: "Actifs" },
+];
 
 function ModalDetailParticipant({ participantId, onFermer, token }) {
   const [participant, setParticipant] = useState(null);
@@ -429,18 +635,46 @@ function ModalDetailParticipant({ participantId, onFermer, token }) {
   const [nouvelleNote, setNouvelleNote] = useState({ dateNote: new Date().toISOString().slice(0, 10), contenu: "" });
   const [ajoutNoteEnCours, setAjoutNoteEnCours] = useState(false);
   const [diagnosticsEnCours, setDiagnosticsEnCours] = useState({});
+  const [releves, setReleves] = useState([]);
+  const [estimations, setEstimations] = useState([]);
+  const [releveEnEdition, setReleveEnEdition] = useState(null);
+  const [modalNouveauReleve, setModalNouveauReleve] = useState(false);
+  const [estimationEnEdition, setEstimationEnEdition] = useState(null);
+  const [modalNouvelleEstimation, setModalNouvelleEstimation] = useState(false);
+  const [actions, setActions] = useState([]);
+  const [actionEnEdition, setActionEnEdition] = useState(null);
+  const [modalNouvelleAction, setModalNouvelleAction] = useState(false);
+  const [diagnosticGlobalEnCours, setDiagnosticGlobalEnCours] = useState(false);
+  const [performance, setPerformance] = useState(null);
 
   const charger = useCallback(async () => {
     setChargement(true);
-    const [reponseParticipant, reponseEvaluations, reponseNotes, reponseStructure] = await Promise.all([
-      appelApi(`/participants/${participantId}`, { token }),
-      appelApi(`/participants/${participantId}/evaluations-abf`, { token }),
-      appelApi(`/participants/${participantId}/notes-suivi`, { token }),
-      appelApi("/abf/structure", { token }),
-    ]);
+    const [
+      reponseParticipant,
+      reponseEvaluations,
+      reponseNotes,
+      reponseStructure,
+      reponseReleves,
+      reponseEstimations,
+      reponseActions,
+      reponsePerformance,
+    ] = await Promise.all([
+        appelApi(`/participants/${participantId}`, { token }),
+        appelApi(`/participants/${participantId}/evaluations-abf`, { token }),
+        appelApi(`/participants/${participantId}/notes-suivi`, { token }),
+        appelApi("/abf/structure", { token }),
+        appelApi(`/participants/${participantId}/releves-mensuels`, { token }),
+        appelApi(`/participants/${participantId}/estimations-couts`, { token }),
+        appelApi(`/participants/${participantId}/actions-accompagnement`, { token }),
+        appelApi(`/participants/${participantId}/performance`, { token }),
+      ]);
     if (reponseParticipant.ok) setParticipant(reponseParticipant.data);
     if (reponseEvaluations.ok) setEvaluations(reponseEvaluations.data);
     if (reponseNotes.ok) setNotes(reponseNotes.data);
+    if (reponseReleves.ok) setReleves(reponseReleves.data);
+    if (reponseEstimations.ok) setEstimations(reponseEstimations.data);
+    if (reponseActions.ok) setActions(reponseActions.data);
+    if (reponsePerformance.ok) setPerformance(reponsePerformance.data);
     if (reponseStructure.ok) {
       ABF_RUBRIQUES = reponseStructure.data.rubriques;
       ABF_DOMAINES = reponseStructure.data.domainesBesoinFormation;
@@ -501,10 +735,55 @@ function ModalDetailParticipant({ participantId, onFermer, token }) {
     else alert(reponse.data?.error || "Le diagnostic IA est momentanément indisponible.");
   };
 
+  const genererDiagnosticGlobal = async () => {
+    setDiagnosticGlobalEnCours(true);
+    const reponse = await appelApi(`/participants/${participantId}/diagnostic-global-ia`, {
+      method: "POST",
+      token,
+    });
+    setDiagnosticGlobalEnCours(false);
+    if (reponse.ok) charger();
+    else alert(reponse.data?.error || "Le diagnostic IA global est momentanément indisponible.");
+  };
+
+  const supprimerReleve = async (releve) => {
+    if (!confirm("Supprimer ce relevé mensuel ?")) return;
+    const reponse = await appelApi(`/participants/${participantId}/releves-mensuels/${releve.id}`, {
+      method: "DELETE",
+      token,
+    });
+    if (reponse.ok) charger();
+    else alert(reponse.data?.error || "Impossible de supprimer ce relevé.");
+  };
+
+  const supprimerEstimation = async (estimation) => {
+    if (!confirm("Supprimer cette estimation de coût ?")) return;
+    const reponse = await appelApi(`/participants/${participantId}/estimations-couts/${estimation.id}`, {
+      method: "DELETE",
+      token,
+    });
+    if (reponse.ok) charger();
+    else alert(reponse.data?.error || "Impossible de supprimer cette estimation.");
+  };
+
+  const supprimerAction = async (action) => {
+    if (!confirm("Supprimer cette action du plan d'accompagnement ?")) return;
+    const reponse = await appelApi(`/participants/${participantId}/actions-accompagnement/${action.id}`, {
+      method: "DELETE",
+      token,
+    });
+    if (reponse.ok) charger();
+    else alert(reponse.data?.error || "Impossible de supprimer cette action.");
+  };
+
   const ONGLETS = [
     { id: "formations", label: "Formations", icone: <GraduationCap size={14} /> },
     { id: "abf", label: "Évaluations ABF", icone: <ClipboardList size={14} /> },
     { id: "suivi", label: "Notes de suivi", icone: <StickyNote size={14} /> },
+    { id: "registres", label: "Registres", icone: <BookOpen size={14} /> },
+    { id: "couts", label: "Coût de revient", icone: <Calculator size={14} /> },
+    { id: "accompagnement", label: "Plan d'accompagnement", icone: <ListChecks size={14} /> },
+    { id: "performance", label: "Performance", icone: <TrendingUp size={14} /> },
   ];
 
   return (
@@ -520,6 +799,93 @@ function ModalDetailParticipant({ participantId, onFermer, token }) {
           <p className="text-sm text-slate-500">
             {[participant.nomEntreprise, participant.localite].filter(Boolean).join(" · ") || "—"}
           </p>
+
+          {participant.sante && (
+            <div
+              className={`rounded-lg border p-3 ${
+                participant.sante.badge === "rouge"
+                  ? "border-rose-200 bg-rose-50"
+                  : participant.sante.badge === "orange"
+                  ? "border-amber-200 bg-amber-50"
+                  : "border-emerald-200 bg-emerald-50"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <p className="text-xs font-semibold text-slate-600">Santé de la PME</p>
+                <Badge couleur={couleurSante(participant.sante.badge)}>{libelleSante(participant.sante.badge)}</Badge>
+              </div>
+              {participant.sante.alertes.length > 0 ? (
+                <ul className="mt-1.5 ml-4 list-disc text-xs text-slate-600">
+                  {participant.sante.alertes.map((a, i) => (
+                    <li key={i}>{a.message}</li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-1 text-xs text-slate-500">Aucune alerte active pour le moment.</p>
+              )}
+
+              <div className="mt-3 border-t border-slate-200/70 pt-3">
+                {participant.diagnosticGlobalIa ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-semibold text-slate-600">
+                        Diagnostic IA global{" "}
+                        <span className="font-normal text-slate-400">
+                          · {FormatDate(participant.diagnosticGlobalGenereLe)}
+                        </span>
+                      </p>
+                      <button
+                        onClick={genererDiagnosticGlobal}
+                        disabled={diagnosticGlobalEnCours}
+                        className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-600 disabled:opacity-50"
+                      >
+                        {diagnosticGlobalEnCours ? (
+                          <Loader2 size={12} className="animate-spin" />
+                        ) : (
+                          <Sparkles size={12} />
+                        )}
+                        Régénérer
+                      </button>
+                    </div>
+                    <p className="text-sm text-slate-600">{participant.diagnosticGlobalIa.diagnostic}</p>
+                    {participant.diagnosticGlobalIa.causesProfondes?.length > 0 && (
+                      <div>
+                        <p className="text-xs font-medium text-slate-500">Causes profondes probables</p>
+                        <ul className="ml-4 list-disc text-sm text-slate-600">
+                          {participant.diagnosticGlobalIa.causesProfondes.map((c, i) => (
+                            <li key={i}>{c}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {participant.diagnosticGlobalIa.actionsSuggerees?.length > 0 && (
+                      <div>
+                        <p className="text-xs font-medium text-slate-500">Actions suggérées</p>
+                        <ul className="ml-4 list-disc text-sm text-slate-600">
+                          {participant.diagnosticGlobalIa.actionsSuggerees.map((a, i) => (
+                            <li key={i}>{a}</li>
+                          ))}
+                        </ul>
+                        <p className="mt-1 text-[11px] text-slate-400">
+                          Ces suggestions sont importables en un clic depuis la fiche "Nouvelle action" du plan
+                          d'accompagnement.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <Bouton variante="discret" onClick={genererDiagnosticGlobal} disabled={diagnosticGlobalEnCours}>
+                    {diagnosticGlobalEnCours ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <Sparkles size={14} />
+                    )}
+                    Générer le diagnostic IA global
+                  </Bouton>
+                )}
+              </div>
+            </div>
+          )}
 
           <div className="flex gap-1 border-b border-slate-100">
             {ONGLETS.map((o) => (
@@ -730,6 +1096,282 @@ function ModalDetailParticipant({ participantId, onFermer, token }) {
               )}
             </div>
           )}
+
+          {onglet === "registres" && (
+            <div className="space-y-3">
+              <div className="flex justify-end">
+                <Bouton onClick={() => setModalNouveauReleve(true)}>
+                  <Plus size={16} /> Nouveau relevé
+                </Bouton>
+              </div>
+              {releves.length === 0 ? (
+                <p className="rounded-lg bg-slate-50 px-3 py-4 text-center text-sm text-slate-400">
+                  Aucun relevé mensuel enregistré pour le moment.
+                </p>
+              ) : (
+                <ul className="divide-y divide-slate-100 rounded-lg border border-slate-100">
+                  {releves.map((r) => (
+                    <li key={r.id} className="px-4 py-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-semibold text-slate-700">{FormatMois(r.mois)}</p>
+                        <MenuActions
+                          actions={[
+                            { label: "Modifier", icone: <Pencil size={14} />, onClick: () => setReleveEnEdition(r) },
+                            {
+                              label: "Supprimer",
+                              icone: <Trash2 size={14} />,
+                              danger: true,
+                              onClick: () => supprimerReleve(r),
+                            },
+                          ]}
+                        />
+                      </div>
+                      <div className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs text-slate-500 sm:grid-cols-4">
+                        <p>Ventes : <span className="text-slate-700">{FormatMontant(r.ventesTotales)}</span></p>
+                        <p>Achats : <span className="text-slate-700">{FormatMontant(r.achatsTotaux)}</span></p>
+                        <p>Dépenses : <span className="text-slate-700">{FormatMontant(r.depenses)}</span></p>
+                        <p>
+                          Bénéfice net :{" "}
+                          <span className={r.beneficeNet >= 0 ? "font-medium text-emerald-600" : "font-medium text-rose-600"}>
+                            {FormatMontant(r.beneficeNet)}
+                          </span>
+                        </p>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {REGISTRES_SUIVIS.map((reg) => (
+                          <span
+                            key={reg.champ}
+                            className={`flex items-center gap-1 text-xs ${
+                              r[reg.champ] ? "text-emerald-600" : "text-slate-300"
+                            }`}
+                          >
+                            {r[reg.champ] ? <CheckCircle2 size={12} /> : <Circle size={12} />} {reg.label}
+                          </span>
+                        ))}
+                      </div>
+                      {r.notes && <p className="mt-2 text-xs text-slate-500">{r.notes}</p>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {onglet === "couts" && (
+            <div className="space-y-3">
+              <div className="flex justify-end">
+                <Bouton onClick={() => setModalNouvelleEstimation(true)}>
+                  <Plus size={16} /> Nouvelle estimation
+                </Bouton>
+              </div>
+              {estimations.length === 0 ? (
+                <p className="rounded-lg bg-slate-50 px-3 py-4 text-center text-sm text-slate-400">
+                  Aucune estimation de coût enregistrée pour le moment.
+                </p>
+              ) : (
+                <ul className="divide-y divide-slate-100 rounded-lg border border-slate-100">
+                  {estimations.map((est) => (
+                    <li key={est.id} className="px-4 py-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-700">{est.nomProduit}</p>
+                          <p className="text-xs text-slate-400">{FormatDate(est.dateEstimation)}</p>
+                        </div>
+                        <MenuActions
+                          actions={[
+                            { label: "Modifier", icone: <Pencil size={14} />, onClick: () => setEstimationEnEdition(est) },
+                            {
+                              label: "Supprimer",
+                              icone: <Trash2 size={14} />,
+                              danger: true,
+                              onClick: () => supprimerEstimation(est),
+                            },
+                          ]}
+                        />
+                      </div>
+                      <div className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs text-slate-500 sm:grid-cols-3">
+                        <p>Coût total : <span className="text-slate-700">{FormatMontant(est.coutTotal)}</span></p>
+                        <p>Coût unitaire : <span className="text-slate-700">{FormatMontant(est.coutUnitaire)}</span></p>
+                        <p>
+                          Prix de vente conseillé :{" "}
+                          <span className="font-medium text-emerald-600">{FormatMontant(est.prixVenteConseille)}</span>
+                        </p>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-400">
+                        Quantité produite : {est.quantiteProduite} · Marge souhaitée : {est.margeSouhaitee}%
+                      </p>
+                      {est.notes && <p className="mt-2 text-xs text-slate-500">{est.notes}</p>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {onglet === "accompagnement" && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex flex-wrap gap-1.5">
+                  {actions.filter(estActionEnRetard).length > 0 && (
+                    <Badge couleur="rose">
+                      {actions.filter(estActionEnRetard).length} action
+                      {actions.filter(estActionEnRetard).length > 1 ? "s" : ""} en retard
+                    </Badge>
+                  )}
+                  {actions.filter(estActionBientotEnRetard).length > 0 && (
+                    <Badge couleur="amber">
+                      {actions.filter(estActionBientotEnRetard).length} action
+                      {actions.filter(estActionBientotEnRetard).length > 1 ? "s" : ""} à échéance proche (
+                      {DELAI_ALERTE_ECHEANCE_JOURS} j)
+                    </Badge>
+                  )}
+                </div>
+                <Bouton onClick={() => setModalNouvelleAction(true)}>
+                  <Plus size={16} /> Nouvelle action
+                </Bouton>
+              </div>
+              {actions.length === 0 ? (
+                <p className="rounded-lg bg-slate-50 px-3 py-4 text-center text-sm text-slate-400">
+                  Aucune action de plan d'accompagnement enregistrée pour le moment.
+                </p>
+              ) : (
+                <ul className="divide-y divide-slate-100 rounded-lg border border-slate-100">
+                  {actions.map((act) => (
+                    <li
+                      key={act.id}
+                      className={`px-4 py-3 ${
+                        estActionEnRetard(act)
+                          ? "bg-rose-50"
+                          : estActionBientotEnRetard(act)
+                          ? "bg-amber-50"
+                          : ""
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-700">{act.probleme}</p>
+                          <p className="text-xs text-slate-400">
+                            Échéance : {FormatDate(act.echeance)}
+                            {estActionEnRetard(act) && (
+                              <span className="ml-1.5 font-medium text-rose-600">(en retard)</span>
+                            )}
+                            {!estActionEnRetard(act) && estActionBientotEnRetard(act) && (
+                              <span className="ml-1.5 font-medium text-amber-600">(échéance proche)</span>
+                            )}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {act.origine === "ABF" && <Badge couleur="slate">Diagnostic ABF</Badge>}
+                          {act.origine === "IA_globale" && <Badge couleur="slate">Diagnostic IA global</Badge>}
+                          <Badge couleur={couleurStatutAction(act.statut)}>{act.statut}</Badge>
+                          <MenuActions
+                            actions={[
+                              { label: "Modifier", icone: <Pencil size={14} />, onClick: () => setActionEnEdition(act) },
+                              {
+                                label: "Supprimer",
+                                icone: <Trash2 size={14} />,
+                                danger: true,
+                                onClick: () => supprimerAction(act),
+                              },
+                            ]}
+                          />
+                        </div>
+                      </div>
+                      <p className="mt-1.5 text-xs text-slate-500">
+                        Action : <span className="text-slate-700">{act.action}</span>
+                      </p>
+                      <p className="mt-1 text-xs text-slate-400">Responsable : {act.responsable}</p>
+                      {act.formationLiee && (
+                        <p className="mt-1 text-xs text-slate-400">
+                          Formation liée : <span className="text-slate-600">{libelleRubriqueAbf(act.formationLiee)}</span>
+                        </p>
+                      )}
+                      {act.noteVerification && (
+                        <p className="mt-2 text-xs text-slate-500">Vérification : {act.noteVerification}</p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {onglet === "performance" && (
+            <div className="space-y-5">
+              <div>
+                <p className="mb-2 text-sm font-semibold text-slate-700">Progression ABF (Avant → Après formation)</p>
+                {!performance?.progressionAbf ? (
+                  <p className="rounded-lg bg-slate-50 px-3 py-4 text-center text-sm text-slate-400">
+                    Pas encore assez de données pour mesurer la progression : il faut au moins une évaluation ABF
+                    "Avant formation" et une "Après formation" pour cette PME.
+                  </p>
+                ) : (
+                  <div className="overflow-hidden rounded-lg border border-slate-100">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-400">
+                        <tr>
+                          <th className="px-3 py-2">Rubrique</th>
+                          <th className="px-3 py-2">Avant</th>
+                          <th className="px-3 py-2">Après</th>
+                          <th className="px-3 py-2">Évolution</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-50">
+                        {performance.progressionAbf.rubriques.map((r) => (
+                          <tr key={r.rubriqueId}>
+                            <td className="px-3 py-2 text-slate-600">{r.titre}</td>
+                            <td className="px-3 py-2 text-slate-500">
+                              {r.niveauAvant !== null ? `${r.niveauAvant}/5` : "—"}
+                            </td>
+                            <td className="px-3 py-2 text-slate-500">
+                              {r.niveauApres !== null ? `${r.niveauApres}/5` : "—"}
+                            </td>
+                            <td className="px-3 py-2">
+                              {r.delta === null ? (
+                                <span className="text-slate-300">—</span>
+                              ) : r.delta > 0 ? (
+                                <span className="flex items-center gap-1 font-medium text-emerald-600">
+                                  <ArrowUp size={14} /> +{r.delta}
+                                </span>
+                              ) : r.delta < 0 ? (
+                                <span className="flex items-center gap-1 font-medium text-rose-600">
+                                  <ArrowDown size={14} /> {r.delta}
+                                </span>
+                              ) : (
+                                <span className="flex items-center gap-1 text-slate-400">
+                                  <Minus size={14} /> 0
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <div className="border-t border-slate-100 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                      Évaluation "Avant" du {FormatDate(performance.progressionAbf.dateEvaluationAvant)} · Évaluation
+                      "Après" du {FormatDate(performance.progressionAbf.dateEvaluationApres)} · Progression moyenne :{" "}
+                      <span className="font-medium text-slate-700">
+                        {performance.progressionAbf.moyenneDelta === null
+                          ? "—"
+                          : `${performance.progressionAbf.moyenneDelta > 0 ? "+" : ""}${performance.progressionAbf.moyenneDelta.toFixed(1)}`}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <p className="mb-2 text-sm font-semibold text-slate-700">Évolution du bénéfice net</p>
+                {!performance?.evolutionFinanciere || performance.evolutionFinanciere.length < 2 ? (
+                  <p className="rounded-lg bg-slate-50 px-3 py-4 text-center text-sm text-slate-400">
+                    Pas encore assez de relevés mensuels pour visualiser une tendance (au moins 2 mois nécessaires).
+                  </p>
+                ) : (
+                  <GraphiqueBeneficeNet donnees={performance.evolutionFinanciere} />
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -744,6 +1386,59 @@ function ModalDetailParticipant({ participantId, onFermer, token }) {
           onEnregistre={() => {
             setModalNouvelleEvaluation(false);
             setEvaluationEnEdition(null);
+            charger();
+          }}
+          token={token}
+        />
+      )}
+
+      {(modalNouveauReleve || releveEnEdition) && (
+        <ModalReleveMensuel
+          participantId={participantId}
+          releve={releveEnEdition}
+          onFermer={() => {
+            setModalNouveauReleve(false);
+            setReleveEnEdition(null);
+          }}
+          onEnregistre={() => {
+            setModalNouveauReleve(false);
+            setReleveEnEdition(null);
+            charger();
+          }}
+          token={token}
+        />
+      )}
+
+      {(modalNouvelleEstimation || estimationEnEdition) && (
+        <ModalEstimationCout
+          participantId={participantId}
+          estimation={estimationEnEdition}
+          onFermer={() => {
+            setModalNouvelleEstimation(false);
+            setEstimationEnEdition(null);
+          }}
+          onEnregistre={() => {
+            setModalNouvelleEstimation(false);
+            setEstimationEnEdition(null);
+            charger();
+          }}
+          token={token}
+        />
+      )}
+
+      {(modalNouvelleAction || actionEnEdition) && (
+        <ModalActionAccompagnement
+          participantId={participantId}
+          action={actionEnEdition}
+          evaluations={evaluations}
+          diagnosticGlobal={participant?.diagnosticGlobalIa}
+          onFermer={() => {
+            setModalNouvelleAction(false);
+            setActionEnEdition(null);
+          }}
+          onEnregistre={() => {
+            setModalNouvelleAction(false);
+            setActionEnEdition(null);
             charger();
           }}
           token={token}
@@ -913,6 +1608,470 @@ function ModalEvaluationAbf({ participantId, evaluation, onFermer, onEnregistre,
   );
 }
 
+function ModalReleveMensuel({ participantId, releve, onFermer, onEnregistre, token }) {
+  const [form, setForm] = useState(
+    releve
+      ? {
+          mois: releve.mois.slice(0, 7),
+          ventesTotales: String(releve.ventesTotales),
+          achatsTotaux: String(releve.achatsTotaux),
+          depenses: String(releve.depenses),
+          registreVentes: releve.registreVentes,
+          registreAchats: releve.registreAchats,
+          registreCaisse: releve.registreCaisse,
+          registreCreances: releve.registreCreances,
+          registreActifs: releve.registreActifs,
+          notes: releve.notes || "",
+        }
+      : {
+          mois: new Date().toISOString().slice(0, 7),
+          ventesTotales: "",
+          achatsTotaux: "",
+          depenses: "",
+          registreVentes: false,
+          registreAchats: false,
+          registreCaisse: false,
+          registreCreances: false,
+          registreActifs: false,
+          notes: "",
+        }
+  );
+  const [erreur, setErreur] = useState("");
+  const [enregistrement, setEnregistrement] = useState(false);
+
+  const changer = (champ) => (e) => setForm((f) => ({ ...f, [champ]: e.target.value }));
+  const basculerRegistre = (champ) => setForm((f) => ({ ...f, [champ]: !f[champ] }));
+
+  const soumettre = async (e) => {
+    e.preventDefault();
+    setErreur("");
+    if (!form.mois || form.ventesTotales === "" || form.achatsTotaux === "" || form.depenses === "") {
+      setErreur("Le mois, les ventes, les achats et les dépenses sont obligatoires.");
+      return;
+    }
+    setEnregistrement(true);
+    const corps = { ...form, mois: `${form.mois}-01` };
+    const reponse = releve
+      ? await appelApi(`/participants/${participantId}/releves-mensuels/${releve.id}`, { method: "PUT", body: corps, token })
+      : await appelApi(`/participants/${participantId}/releves-mensuels`, { method: "POST", body: corps, token });
+    setEnregistrement(false);
+    if (reponse.ok) {
+      onEnregistre();
+    } else if (reponse.erreurReseau) {
+      setErreur("Impossible de contacter le serveur.");
+    } else {
+      setErreur(reponse.data?.error || "Une erreur est survenue.");
+    }
+  };
+
+  return (
+    <Modal titre={releve ? "Modifier le relevé mensuel" : "Nouveau relevé mensuel"} onFermer={onFermer}>
+      <form onSubmit={soumettre} className="space-y-4">
+        <Champ label="Mois concerné" type="month" value={form.mois} onChange={changer("mois")} />
+        <div className="grid grid-cols-3 gap-3">
+          <Champ label="Ventes totales (FCFA)" type="number" min="0" value={form.ventesTotales} onChange={changer("ventesTotales")} />
+          <Champ label="Achats totaux (FCFA)" type="number" min="0" value={form.achatsTotaux} onChange={changer("achatsTotaux")} />
+          <Champ label="Dépenses (FCFA)" type="number" min="0" value={form.depenses} onChange={changer("depenses")} />
+        </div>
+        <div>
+          <span className="mb-1.5 block text-xs font-medium text-slate-600">Registres tenus ce mois-ci</span>
+          <div className="flex flex-wrap gap-3">
+            {REGISTRES_SUIVIS.map((reg) => (
+              <label key={reg.champ} className="flex items-center gap-1.5 text-sm text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={form[reg.champ]}
+                  onChange={() => basculerRegistre(reg.champ)}
+                  className="h-4 w-4 rounded border-slate-300"
+                />
+                {reg.label}
+              </label>
+            ))}
+          </div>
+        </div>
+        <Zone label="Notes (optionnel)" value={form.notes} onChange={changer("notes")} />
+        {erreur && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">{erreur}</p>}
+        <div className="flex justify-end gap-2 pt-2">
+          <Bouton type="button" variante="discret" onClick={onFermer}>
+            Annuler
+          </Bouton>
+          <Bouton type="submit" disabled={enregistrement}>
+            {enregistrement ? <Loader2 size={16} className="animate-spin" /> : "Enregistrer"}
+          </Bouton>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function ModalEstimationCout({ participantId, estimation, onFermer, onEnregistre, token }) {
+  const [form, setForm] = useState(
+    estimation
+      ? {
+          nomProduit: estimation.nomProduit,
+          dateEstimation: estimation.dateEstimation.slice(0, 10),
+          coutMatieres: String(estimation.coutMatieres),
+          coutMainOeuvre: String(estimation.coutMainOeuvre),
+          fraisGeneraux: String(estimation.fraisGeneraux),
+          quantiteProduite: String(estimation.quantiteProduite),
+          margeSouhaitee: String(estimation.margeSouhaitee),
+          notes: estimation.notes || "",
+        }
+      : {
+          nomProduit: "",
+          dateEstimation: new Date().toISOString().slice(0, 10),
+          coutMatieres: "",
+          coutMainOeuvre: "",
+          fraisGeneraux: "",
+          quantiteProduite: "",
+          margeSouhaitee: "30",
+          notes: "",
+        }
+  );
+  const [erreur, setErreur] = useState("");
+  const [enregistrement, setEnregistrement] = useState(false);
+
+  const changer = (champ) => (e) => setForm((f) => ({ ...f, [champ]: e.target.value }));
+
+  const apercu = useMemo(() => {
+    const matieres = parseFloat(form.coutMatieres) || 0;
+    const mainOeuvre = parseFloat(form.coutMainOeuvre) || 0;
+    const frais = parseFloat(form.fraisGeneraux) || 0;
+    const quantite = parseFloat(form.quantiteProduite);
+    const marge = parseFloat(form.margeSouhaitee);
+    const coutTotal = matieres + mainOeuvre + frais;
+    const coutUnitaire = quantite > 0 ? coutTotal / quantite : null;
+    const prixVenteConseille =
+      coutUnitaire !== null && !Number.isNaN(marge) ? coutUnitaire * (1 + marge / 100) : null;
+    return { coutTotal, coutUnitaire, prixVenteConseille };
+  }, [form.coutMatieres, form.coutMainOeuvre, form.fraisGeneraux, form.quantiteProduite, form.margeSouhaitee]);
+
+  const soumettre = async (e) => {
+    e.preventDefault();
+    setErreur("");
+    if (!form.nomProduit.trim() || !form.dateEstimation || form.quantiteProduite === "") {
+      setErreur("Le produit, la date et la quantité produite sont obligatoires.");
+      return;
+    }
+    setEnregistrement(true);
+    const reponse = estimation
+      ? await appelApi(`/participants/${participantId}/estimations-couts/${estimation.id}`, { method: "PUT", body: form, token })
+      : await appelApi(`/participants/${participantId}/estimations-couts`, { method: "POST", body: form, token });
+    setEnregistrement(false);
+    if (reponse.ok) {
+      onEnregistre();
+    } else if (reponse.erreurReseau) {
+      setErreur("Impossible de contacter le serveur.");
+    } else {
+      setErreur(reponse.data?.error || "Une erreur est survenue.");
+    }
+  };
+
+  return (
+    <Modal titre={estimation ? "Modifier l'estimation de coût" : "Nouvelle estimation de coût"} onFermer={onFermer}>
+      <form onSubmit={soumettre} className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          <Champ label="Produit ou service" value={form.nomProduit} onChange={changer("nomProduit")} />
+          <Champ label="Date" type="date" value={form.dateEstimation} onChange={changer("dateEstimation")} />
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          <Champ label="Coût matières (FCFA)" type="number" min="0" value={form.coutMatieres} onChange={changer("coutMatieres")} />
+          <Champ label="Coût main-d'œuvre (FCFA)" type="number" min="0" value={form.coutMainOeuvre} onChange={changer("coutMainOeuvre")} />
+          <Champ label="Frais généraux (FCFA)" type="number" min="0" value={form.fraisGeneraux} onChange={changer("fraisGeneraux")} />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Champ
+            label="Quantité produite"
+            type="number"
+            min="0"
+            value={form.quantiteProduite}
+            onChange={changer("quantiteProduite")}
+          />
+          <Champ
+            label="Marge souhaitée (%)"
+            type="number"
+            min="0"
+            value={form.margeSouhaitee}
+            onChange={changer("margeSouhaitee")}
+          />
+        </div>
+        <div className="rounded-lg bg-slate-50 p-3">
+          <p className="mb-1.5 text-xs font-medium text-slate-500">Aperçu du calcul</p>
+          <div className="grid grid-cols-3 gap-2 text-sm">
+            <p className="text-slate-600">
+              Coût total<br />
+              <span className="font-semibold text-slate-800">{FormatMontant(apercu.coutTotal)}</span>
+            </p>
+            <p className="text-slate-600">
+              Coût unitaire<br />
+              <span className="font-semibold text-slate-800">{FormatMontant(apercu.coutUnitaire)}</span>
+            </p>
+            <p className="text-slate-600">
+              Prix conseillé<br />
+              <span className="font-semibold text-emerald-600">{FormatMontant(apercu.prixVenteConseille)}</span>
+            </p>
+          </div>
+        </div>
+        <Zone label="Notes (optionnel)" value={form.notes} onChange={changer("notes")} />
+        {erreur && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">{erreur}</p>}
+        <div className="flex justify-end gap-2 pt-2">
+          <Bouton type="button" variante="discret" onClick={onFermer}>
+            Annuler
+          </Bouton>
+          <Bouton type="submit" disabled={enregistrement}>
+            {enregistrement ? <Loader2 size={16} className="animate-spin" /> : "Enregistrer"}
+          </Bouton>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function ModalActionAccompagnement({ participantId, action, evaluations, diagnosticGlobal, onFermer, onEnregistre, token }) {
+  const [form, setForm] = useState(
+    action
+      ? {
+          probleme: action.probleme,
+          action: action.action,
+          formationLiee: action.formationLiee || "",
+          responsable: action.responsable,
+          echeance: action.echeance.slice(0, 10),
+          statut: action.statut,
+          noteVerification: action.noteVerification || "",
+          origine: action.origine || "Observation",
+          evaluationAbfId: action.evaluationAbfId || "",
+        }
+      : {
+          probleme: "",
+          action: "",
+          formationLiee: "",
+          responsable: "",
+          echeance: new Date().toISOString().slice(0, 10),
+          statut: "À faire",
+          noteVerification: "",
+          origine: "Observation",
+          evaluationAbfId: "",
+        }
+  );
+  const [erreur, setErreur] = useState("");
+  const [enregistrement, setEnregistrement] = useState(false);
+
+  // Évaluations ABF de cette PME pour lesquelles un diagnostic IA a déjà été généré : ce sont
+  // elles qu'on peut proposer en import rapide dans la fiche.
+  const evaluationsAvecDiagnostic = (evaluations || []).filter((e) => e.diagnosticIa);
+  const [evaluationChoisieId, setEvaluationChoisieId] = useState(
+    form.evaluationAbfId || evaluationsAvecDiagnostic[0]?.id || ""
+  );
+  const evaluationChoisie = evaluationsAvecDiagnostic.find((e) => e.id === evaluationChoisieId);
+
+  const changer = (champ) => (e) => setForm((f) => ({ ...f, [champ]: e.target.value }));
+
+  const importerDepuisAbf = (champs) =>
+    setForm((f) => ({ ...f, ...champs, origine: "ABF", evaluationAbfId: evaluationChoisieId }));
+
+  const importerDepuisDiagnosticGlobal = (champs) =>
+    setForm((f) => ({ ...f, ...champs, origine: "IA_globale", evaluationAbfId: "" }));
+
+  const soumettre = async (e) => {
+    e.preventDefault();
+    setErreur("");
+    if (!form.probleme.trim() || !form.action.trim() || !form.responsable.trim() || !form.echeance) {
+      setErreur("Le problème, l'action, le responsable et l'échéance sont obligatoires.");
+      return;
+    }
+    setEnregistrement(true);
+    const reponse = action
+      ? await appelApi(`/participants/${participantId}/actions-accompagnement/${action.id}`, {
+          method: "PUT",
+          body: form,
+          token,
+        })
+      : await appelApi(`/participants/${participantId}/actions-accompagnement`, {
+          method: "POST",
+          body: form,
+          token,
+        });
+    setEnregistrement(false);
+    if (reponse.ok) {
+      onEnregistre();
+    } else if (reponse.erreurReseau) {
+      setErreur("Impossible de contacter le serveur.");
+    } else {
+      setErreur(reponse.data?.error || "Une erreur est survenue.");
+    }
+  };
+
+  return (
+    <Modal titre={action ? "Modifier l'action" : "Nouvelle action d'accompagnement"} onFermer={onFermer}>
+      <form onSubmit={soumettre} className="space-y-4">
+        {evaluationsAvecDiagnostic.length > 0 && (
+          <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-semibold text-slate-600">Importer depuis le diagnostic ABF</p>
+              {evaluationsAvecDiagnostic.length > 1 && (
+                <select
+                  value={evaluationChoisieId}
+                  onChange={(e) => setEvaluationChoisieId(e.target.value)}
+                  className="rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600"
+                >
+                  {evaluationsAvecDiagnostic.map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.moment} · {FormatDate(e.dateEvaluation)}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+            {evaluationChoisie && (
+              <>
+                {evaluationChoisie.diagnosticIa.problemesIdentifies?.length > 0 && (
+                  <div>
+                    <p className="mb-1 text-xs text-slate-500">Problèmes identifiés</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {evaluationChoisie.diagnosticIa.problemesIdentifies.map((texte, i) => (
+                        <button
+                          type="button"
+                          key={i}
+                          onClick={() => importerDepuisAbf({ probleme: texte })}
+                          className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 hover:border-slate-400"
+                        >
+                          {texte}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {evaluationChoisie.diagnosticIa.actionsCorrectives?.length > 0 && (
+                  <div>
+                    <p className="mb-1 text-xs text-slate-500">Actions correctives</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {evaluationChoisie.diagnosticIa.actionsCorrectives.map((texte, i) => (
+                        <button
+                          type="button"
+                          key={i}
+                          onClick={() => importerDepuisAbf({ action: texte })}
+                          className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 hover:border-slate-400"
+                        >
+                          {texte}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {evaluationChoisie.diagnosticIa.formationsRecommandees?.length > 0 && (
+                  <div>
+                    <p className="mb-1 text-xs text-slate-500">
+                      Formations à prioriser <span className="font-normal text-slate-400">(indépendant du problème et de l'action ci-dessous : un même problème peut avoir les deux)</span>
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {evaluationChoisie.diagnosticIa.formationsRecommandees.map((idModule) => (
+                        <button
+                          type="button"
+                          key={idModule}
+                          onClick={() => importerDepuisAbf({ formationLiee: idModule })}
+                          className={`rounded-full border px-2.5 py-1 text-xs ${
+                            form.formationLiee === idModule
+                              ? "border-slate-800 bg-slate-800 text-white"
+                              : "border-slate-200 bg-white text-slate-600 hover:border-slate-400"
+                          }`}
+                        >
+                          {libelleRubriqueAbf(idModule)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+            <p className="text-[11px] text-slate-400">
+              Clique sur un élément pour préremplir les champs ci-dessous ; tu peux ensuite les modifier librement.
+            </p>
+          </div>
+        )}
+
+        {diagnosticGlobal && (
+          <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <p className="text-xs font-semibold text-slate-600">Importer depuis le diagnostic IA global</p>
+            {diagnosticGlobal.causesProfondes?.length > 0 && (
+              <div>
+                <p className="mb-1 text-xs text-slate-500">Causes profondes probables</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {diagnosticGlobal.causesProfondes.map((texte, i) => (
+                    <button
+                      type="button"
+                      key={i}
+                      onClick={() => importerDepuisDiagnosticGlobal({ probleme: texte })}
+                      className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 hover:border-slate-400"
+                    >
+                      {texte}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {diagnosticGlobal.actionsSuggerees?.length > 0 && (
+              <div>
+                <p className="mb-1 text-xs text-slate-500">Actions suggérées</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {diagnosticGlobal.actionsSuggerees.map((texte, i) => (
+                    <button
+                      type="button"
+                      key={i}
+                      onClick={() => importerDepuisDiagnosticGlobal({ action: texte })}
+                      className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 hover:border-slate-400"
+                    >
+                      {texte}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            <p className="text-[11px] text-slate-400">
+              Clique sur un élément pour préremplir les champs ci-dessous ; tu peux ensuite les modifier librement.
+            </p>
+          </div>
+        )}
+
+        <Zone label="Problème identifié" value={form.probleme} onChange={changer("probleme")} />
+        <Zone label="Action à mener" value={form.action} onChange={changer("action")} />
+        <Selecteur label="Formation liée (optionnel)" value={form.formationLiee} onChange={changer("formationLiee")}>
+          <option value="">Aucune formation liée</option>
+          {ABF_DOMAINES.map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.label}
+            </option>
+          ))}
+        </Selecteur>
+        <div className="grid grid-cols-2 gap-3">
+          <Champ label="Responsable" value={form.responsable} onChange={changer("responsable")} />
+          <Champ label="Échéance" type="date" value={form.echeance} onChange={changer("echeance")} />
+        </div>
+        <Selecteur label="Statut" value={form.statut} onChange={changer("statut")}>
+          {STATUTS_ACTION.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </Selecteur>
+        <Zone
+          label="Note de vérification (optionnel)"
+          value={form.noteVerification}
+          onChange={changer("noteVerification")}
+        />
+        {erreur && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">{erreur}</p>}
+        <div className="flex justify-end gap-2 pt-2">
+          <Bouton type="button" variante="discret" onClick={onFermer}>
+            Annuler
+          </Bouton>
+          <Bouton type="submit" disabled={enregistrement}>
+            {enregistrement ? <Loader2 size={16} className="animate-spin" /> : "Enregistrer"}
+          </Bouton>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 // Rempli dynamiquement au chargement de l'app (voir App -> chargerModules) pour que la liste des
 // modules GERME reste définie à un seul endroit : le serveur (src/lib/modulesGerme.js).
 let MODULES_GERME_LABEL = {};
@@ -954,8 +2113,15 @@ function PageParticipants({ token }) {
     else alert(reponse.data?.error || "Impossible de supprimer ce participant.");
   };
 
+  const stats = useMemo(() => {
+    const actifs = participants.filter((p) => p.statut === "Actif").length;
+    const vigilance = participants.filter((p) => p.sante?.badge === "rouge").length;
+    const aSurveiller = participants.filter((p) => p.sante?.badge === "orange").length;
+    return { total: participants.length, actifs, vigilance, aSurveiller };
+  }, [participants]);
+
   return (
-    <div>
+    <div className="mx-auto max-w-6xl">
       <div className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold text-slate-800">Participants</h1>
@@ -964,6 +2130,13 @@ function PageParticipants({ token }) {
         <Bouton onClick={() => setModalCreation(true)}>
           <Plus size={16} /> Nouveau participant
         </Bouton>
+      </div>
+
+      <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <CarteStat icone={<Users size={18} />} label="PME suivies" valeur={stats.total} couleur="slate" />
+        <CarteStat icone={<CheckCircle2 size={18} />} label="Actives" valeur={stats.actifs} couleur="emerald" />
+        <CarteStat icone={<TrendingUp size={18} />} label="À surveiller" valeur={stats.aSurveiller} couleur="amber" />
+        <CarteStat icone={<AlertTriangle size={18} />} label="En vigilance" valeur={stats.vigilance} couleur="rose" />
       </div>
 
       <div className="mb-4 flex gap-3">
@@ -1000,19 +2173,20 @@ function PageParticipants({ token }) {
               <th className="px-4 py-3">Téléphone</th>
               <th className="px-4 py-3">Formations</th>
               <th className="px-4 py-3">Statut</th>
+              <th className="px-4 py-3">Santé</th>
               <th className="px-4 py-3"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-50">
             {chargement ? (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-slate-400">
+                <td colSpan={8} className="px-4 py-8 text-center text-slate-400">
                   <Loader2 className="mx-auto animate-spin" />
                 </td>
               </tr>
             ) : participants.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-slate-400">
+                <td colSpan={8} className="px-4 py-8 text-center text-slate-400">
                   Aucun participant trouvé.
                 </td>
               </tr>
@@ -1030,6 +2204,9 @@ function PageParticipants({ token }) {
                   <td className="px-4 py-3 text-slate-500">{p._count.participations}</td>
                   <td className="px-4 py-3">
                     <Badge couleur={couleurStatutParticipant(p.statut)}>{p.statut}</Badge>
+                  </td>
+                  <td className="px-4 py-3">
+                    {p.sante && <Badge couleur={couleurSante(p.sante.badge)}>{libelleSante(p.sante.badge)}</Badge>}
                   </td>
                   <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                     <MenuActions
@@ -1339,8 +2516,18 @@ function PageFormations({ token }) {
 
   const libelleModule = (id) => modules.find((m) => m.id === id)?.label || id;
 
+  const stats = useMemo(() => {
+    const maintenant = new Date();
+    const ceMoisCi = formations.filter((f) => {
+      const d = new Date(f.date);
+      return d.getMonth() === maintenant.getMonth() && d.getFullYear() === maintenant.getFullYear();
+    }).length;
+    const totalInscriptions = formations.reduce((somme, f) => somme + f._count.participations, 0);
+    return { total: formations.length, ceMoisCi, totalInscriptions };
+  }, [formations]);
+
   return (
-    <div>
+    <div className="mx-auto max-w-6xl">
       <div className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold text-slate-800">Formations</h1>
@@ -1349,6 +2536,12 @@ function PageFormations({ token }) {
         <Bouton onClick={() => setModalCreation(true)}>
           <Plus size={16} /> Nouvelle session
         </Bouton>
+      </div>
+
+      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <CarteStat icone={<GraduationCap size={18} />} label="Sessions organisées" valeur={stats.total} couleur="slate" />
+        <CarteStat icone={<Calendar size={18} />} label="Sessions ce mois-ci" valeur={stats.ceMoisCi} couleur="emerald" />
+        <CarteStat icone={<Users size={18} />} label="Inscriptions au total" valeur={stats.totalInscriptions} couleur="amber" />
       </div>
 
       <div className="mb-4">
@@ -1464,6 +2657,179 @@ function PageFormations({ token }) {
 }
 
 // ============================================================================
+// Comptes (creation d'acces conseiller par le coordonnateur)
+// ============================================================================
+
+const COMPTE_VIDE = { nom: "", email: "", motDePasse: "", role: "conseiller" };
+
+function ModalCompte({ onFermer, onEnregistre, token }) {
+  const [form, setForm] = useState(COMPTE_VIDE);
+  const [erreur, setErreur] = useState("");
+  const [enregistrement, setEnregistrement] = useState(false);
+
+  const changer = (champ) => (e) => setForm((f) => ({ ...f, [champ]: e.target.value }));
+
+  const soumettre = async (e) => {
+    e.preventDefault();
+    setErreur("");
+    if (!form.nom.trim() || !form.email.trim() || !form.motDePasse) {
+      setErreur("Le nom, l'email et le mot de passe sont obligatoires.");
+      return;
+    }
+    setEnregistrement(true);
+    const reponse = await appelApi("/auth/utilisateurs", { method: "POST", body: form, token });
+    setEnregistrement(false);
+    if (reponse.ok) {
+      onEnregistre();
+    } else if (reponse.erreurReseau) {
+      setErreur("Impossible de contacter le serveur.");
+    } else {
+      setErreur(reponse.data?.error || "Une erreur est survenue.");
+    }
+  };
+
+  return (
+    <Modal titre="Nouveau compte d'accès" onFermer={onFermer}>
+      <form onSubmit={soumettre} className="space-y-4">
+        <Champ label="Nom" value={form.nom} onChange={changer("nom")} autoFocus />
+        <Champ label="Email" type="email" value={form.email} onChange={changer("email")} />
+        <div>
+          <Champ
+            label="Mot de passe temporaire"
+            type="text"
+            value={form.motDePasse}
+            onChange={changer("motDePasse")}
+          />
+          <p className="mt-1 text-xs text-slate-400">
+            Au moins 8 caractères, avec une lettre et un chiffre. Transmets-le toi-même à la personne
+            concernée (il n'est jamais réaffiché ensuite).
+          </p>
+        </div>
+        <Selecteur label="Rôle" value={form.role} onChange={changer("role")}>
+          <option value="conseiller">Conseiller (accès à ses propres PME uniquement)</option>
+          <option value="coordonnateur">Coordonnateur (peut aussi créer des comptes)</option>
+        </Selecteur>
+        {erreur && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">{erreur}</p>}
+        <div className="flex justify-end gap-2 pt-2">
+          <Bouton type="button" variante="discret" onClick={onFermer}>
+            Annuler
+          </Bouton>
+          <Bouton type="submit" disabled={enregistrement}>
+            {enregistrement ? <Loader2 size={16} className="animate-spin" /> : "Créer le compte"}
+          </Bouton>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function PageComptes({ token }) {
+  const [comptes, setComptes] = useState([]);
+  const [chargement, setChargement] = useState(true);
+  const [modalCreation, setModalCreation] = useState(false);
+  const [erreur, setErreur] = useState("");
+
+  const charger = useCallback(async () => {
+    setChargement(true);
+    setErreur("");
+    const reponse = await appelApi("/auth/utilisateurs", { token });
+    if (reponse.ok) setComptes(reponse.data);
+    else if (reponse.erreurReseau) setErreur("Impossible de contacter le serveur.");
+    setChargement(false);
+  }, [token]);
+
+  useEffect(() => {
+    charger();
+  }, [charger]);
+
+  const stats = useMemo(() => {
+    const coordonnateurs = comptes.filter((c) => c.role === "coordonnateur").length;
+    return {
+      total: comptes.length,
+      coordonnateurs,
+      conseillers: comptes.length - coordonnateurs,
+    };
+  }, [comptes]);
+
+  return (
+    <div className="mx-auto max-w-6xl">
+      <div className="mb-6 flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-semibold text-slate-800">Comptes</h1>
+          <p className="text-sm text-slate-500">
+            Accès à SuiviPME. Chaque compte est indépendant : il ne voit et ne modifie que les PME et
+            formations qu'il a lui-même créées.
+          </p>
+        </div>
+        <Bouton onClick={() => setModalCreation(true)}>
+          <UserPlus size={16} /> Nouveau compte
+        </Bouton>
+      </div>
+
+      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <CarteStat icone={<KeyRound size={18} />} label="Comptes au total" valeur={stats.total} couleur="slate" />
+        <CarteStat icone={<Users size={18} />} label="Coordonnateurs" valeur={stats.coordonnateurs} couleur="emerald" />
+        <CarteStat icone={<UserPlus size={18} />} label="Conseillers" valeur={stats.conseillers} couleur="amber" />
+      </div>
+
+      {erreur && <p className="mb-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">{erreur}</p>}
+
+      <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
+        <table className="w-full text-left text-sm">
+          <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-400">
+            <tr>
+              <th className="px-4 py-3">Nom</th>
+              <th className="px-4 py-3">Email</th>
+              <th className="px-4 py-3">Rôle</th>
+              <th className="px-4 py-3">Créé le</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-50">
+            {chargement ? (
+              <tr>
+                <td colSpan={4} className="px-4 py-8 text-center text-slate-400">
+                  <Loader2 className="mx-auto animate-spin" />
+                </td>
+              </tr>
+            ) : comptes.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="px-4 py-8 text-center text-slate-400">
+                  Aucun compte trouvé.
+                </td>
+              </tr>
+            ) : (
+              comptes.map((c) => (
+                <tr key={c.id}>
+                  <td className="px-4 py-3 font-medium text-slate-700">{c.nom}</td>
+                  <td className="px-4 py-3 text-slate-500">{c.email}</td>
+                  <td className="px-4 py-3">
+                    <Badge couleur={c.role === "coordonnateur" ? "slate" : "emerald"}>
+                      {c.role === "coordonnateur" ? "Coordonnateur" : "Conseiller"}
+                    </Badge>
+                  </td>
+                  <td className="px-4 py-3 text-slate-500">{FormatDate(c.creeLe)}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {modalCreation && (
+        <ModalCompte
+          onFermer={() => setModalCreation(false)}
+          onEnregistre={() => {
+            setModalCreation(false);
+            charger();
+          }}
+          token={token}
+        />
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
 // Application
 // ============================================================================
 
@@ -1484,6 +2850,7 @@ export default function App() {
     <MisEnPage session={session} page={page} onChangerPage={setPage} onDeconnexion={deconnexion}>
       {page === "participants" && <PageParticipants token={session.token} />}
       {page === "formations" && <PageFormations token={session.token} />}
+      {page === "comptes" && session.user.role === "coordonnateur" && <PageComptes token={session.token} />}
     </MisEnPage>
   );
 }
