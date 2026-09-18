@@ -456,11 +456,131 @@ function PageConnexion({ onConnecte }) {
   );
 }
 
+// Formulaire reutilisable de changement de mot de passe (exige de connaitre le mot de passe
+// actuel) : utilise a la fois pour le changement obligatoire a la premiere connexion et pour un
+// changement volontaire depuis le menu de gauche.
+function FormulaireChangementMotDePasse({ token, onSuccess, texteBouton = "Mettre à jour le mot de passe" }) {
+  const [motDePasseActuel, setMotDePasseActuel] = useState("");
+  const [nouveauMotDePasse, setNouveauMotDePasse] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [erreur, setErreur] = useState("");
+  const [enregistrement, setEnregistrement] = useState(false);
+
+  const soumettre = async (e) => {
+    e.preventDefault();
+    setErreur("");
+    if (!motDePasseActuel || !nouveauMotDePasse || !confirmation) {
+      setErreur("Tous les champs sont obligatoires.");
+      return;
+    }
+    if (nouveauMotDePasse !== confirmation) {
+      setErreur("Les deux mots de passe ne correspondent pas.");
+      return;
+    }
+    setEnregistrement(true);
+    const reponse = await appelApi("/auth/changer-mot-de-passe", {
+      method: "PATCH",
+      body: { motDePasseActuel, nouveauMotDePasse },
+      token,
+    });
+    setEnregistrement(false);
+    if (reponse.ok) {
+      onSuccess();
+    } else if (reponse.erreurReseau) {
+      setErreur("Impossible de contacter le serveur.");
+    } else {
+      setErreur(reponse.data?.error || "Une erreur est survenue.");
+    }
+  };
+
+  return (
+    <form onSubmit={soumettre} className="space-y-4">
+      <Champ
+        label="Mot de passe actuel"
+        type="password"
+        value={motDePasseActuel}
+        onChange={(e) => setMotDePasseActuel(e.target.value)}
+        autoFocus
+      />
+      <Champ
+        label="Nouveau mot de passe"
+        type="password"
+        value={nouveauMotDePasse}
+        onChange={(e) => setNouveauMotDePasse(e.target.value)}
+      />
+      <div>
+        <Champ
+          label="Confirmer le nouveau mot de passe"
+          type="password"
+          value={confirmation}
+          onChange={(e) => setConfirmation(e.target.value)}
+        />
+        <p className="mt-1 text-xs text-slate-400">Au moins 8 caractères, avec une lettre et un chiffre.</p>
+      </div>
+      {erreur && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">{erreur}</p>}
+      <Bouton type="submit" disabled={enregistrement} className="w-full">
+        {enregistrement ? <Loader2 size={16} className="animate-spin" /> : texteBouton}
+      </Bouton>
+    </form>
+  );
+}
+
+// Écran plein bloquant, affiché tant que `doitChangerMotDePasse` est vrai (compte créé par le
+// coordonnateur, ou mot de passe réinitialisé pour oubli) — impossible d'accéder au reste de
+// l'application avant d'avoir défini un nouveau mot de passe.
+function PageChangementMotDePasseObligatoire({ token, onSuccess, onDeconnexion }) {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
+      <div className="w-full max-w-sm rounded-2xl border border-slate-100 bg-white p-8 shadow-sm">
+        <div className="mb-6 text-center">
+          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-900">
+            <KeyRound className="text-white" size={24} />
+          </div>
+          <h1 className="text-lg font-semibold text-slate-800">Changement de mot de passe requis</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Pour des raisons de sécurité, définissez un nouveau mot de passe avant de continuer.
+          </p>
+        </div>
+        <FormulaireChangementMotDePasse token={token} onSuccess={onSuccess} texteBouton="Continuer" />
+        <button
+          onClick={onDeconnexion}
+          className="mt-4 w-full text-center text-xs text-slate-400 hover:text-slate-600"
+        >
+          Se déconnecter
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Fenêtre de changement de mot de passe volontaire (accessible à tout moment depuis le menu de
+// gauche), reprend le même formulaire que le changement obligatoire.
+function ModalChangerMotDePasse({ onFermer, token }) {
+  const [succes, setSucces] = useState(false);
+  return (
+    <Modal titre="Changer mon mot de passe" onFermer={onFermer}>
+      {succes ? (
+        <div className="space-y-4 text-center">
+          <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+            Votre mot de passe a été mis à jour.
+          </p>
+          <Bouton onClick={onFermer} className="w-full">
+            Fermer
+          </Bouton>
+        </div>
+      ) : (
+        <FormulaireChangementMotDePasse token={token} onSuccess={() => setSucces(true)} />
+      )}
+    </Modal>
+  );
+}
+
 // ============================================================================
 // Mise en page générale (menu latéral)
 // ============================================================================
 
 function MisEnPage({ session, page, onChangerPage, onDeconnexion, children }) {
+  const [modalMotDePasse, setModalMotDePasse] = useState(false);
   const items = [
     { id: "participants", label: "Participants", icone: <Users size={18} /> },
     { id: "formations", label: "Formations", icone: <GraduationCap size={18} /> },
@@ -499,6 +619,13 @@ function MisEnPage({ session, page, onChangerPage, onDeconnexion, children }) {
             </p>
           </div>
           <button
+            onClick={() => setModalMotDePasse(true)}
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-500 hover:bg-slate-100"
+          >
+            <KeyRound size={16} />
+            Changer mon mot de passe
+          </button>
+          <button
             onClick={onDeconnexion}
             className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-500 hover:bg-slate-100"
           >
@@ -508,6 +635,9 @@ function MisEnPage({ session, page, onChangerPage, onDeconnexion, children }) {
         </div>
       </aside>
       <main className="flex-1 overflow-y-auto p-8">{children}</main>
+      {modalMotDePasse && (
+        <ModalChangerMotDePasse onFermer={() => setModalMotDePasse(false)} token={session.token} />
+      )}
     </div>
   );
 }
@@ -2723,10 +2853,84 @@ function ModalCompte({ onFermer, onEnregistre, token }) {
   );
 }
 
+// Reinitialisation du mot de passe d'un compte par le coordonnateur (cas d'un mot de passe
+// oublie) : lui-meme choisit un nouveau mot de passe provisoire, exactement comme a la creation
+// du compte, et le transmet a la main a la personne concernee.
+function ModalReinitialiserMotDePasse({ compte, onFermer, token }) {
+  const [nouveauMotDePasse, setNouveauMotDePasse] = useState("");
+  const [erreur, setErreur] = useState("");
+  const [enregistrement, setEnregistrement] = useState(false);
+  const [succes, setSucces] = useState(false);
+
+  const soumettre = async (e) => {
+    e.preventDefault();
+    setErreur("");
+    if (!nouveauMotDePasse) {
+      setErreur("Le nouveau mot de passe est obligatoire.");
+      return;
+    }
+    setEnregistrement(true);
+    const reponse = await appelApi(`/auth/utilisateurs/${compte.id}/reinitialiser-mot-de-passe`, {
+      method: "PATCH",
+      body: { nouveauMotDePasse },
+      token,
+    });
+    setEnregistrement(false);
+    if (reponse.ok) {
+      setSucces(true);
+    } else if (reponse.erreurReseau) {
+      setErreur("Impossible de contacter le serveur.");
+    } else {
+      setErreur(reponse.data?.error || "Une erreur est survenue.");
+    }
+  };
+
+  return (
+    <Modal titre={`Réinitialiser le mot de passe de ${compte.nom}`} onFermer={onFermer}>
+      {succes ? (
+        <div className="space-y-4">
+          <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+            Nouveau mot de passe provisoire défini. Transmettez-le vous-même à {compte.nom} (il n'est jamais
+            réaffiché ensuite) — la personne devra le changer dès sa prochaine connexion.
+          </p>
+          <Bouton onClick={onFermer} className="w-full">
+            Fermer
+          </Bouton>
+        </div>
+      ) : (
+        <form onSubmit={soumettre} className="space-y-4">
+          <div>
+            <Champ
+              label="Nouveau mot de passe temporaire"
+              type="text"
+              value={nouveauMotDePasse}
+              onChange={(e) => setNouveauMotDePasse(e.target.value)}
+              autoFocus
+            />
+            <p className="mt-1 text-xs text-slate-400">
+              Au moins 8 caractères, avec une lettre et un chiffre.
+            </p>
+          </div>
+          {erreur && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">{erreur}</p>}
+          <div className="flex justify-end gap-2 pt-2">
+            <Bouton type="button" variante="discret" onClick={onFermer}>
+              Annuler
+            </Bouton>
+            <Bouton type="submit" disabled={enregistrement}>
+              {enregistrement ? <Loader2 size={16} className="animate-spin" /> : "Réinitialiser"}
+            </Bouton>
+          </div>
+        </form>
+      )}
+    </Modal>
+  );
+}
+
 function PageComptes({ token }) {
   const [comptes, setComptes] = useState([]);
   const [chargement, setChargement] = useState(true);
   const [modalCreation, setModalCreation] = useState(false);
+  const [compteReinitialisation, setCompteReinitialisation] = useState(null);
   const [erreur, setErreur] = useState("");
 
   const charger = useCallback(async () => {
@@ -2782,18 +2986,19 @@ function PageComptes({ token }) {
               <th className="px-4 py-3">Email</th>
               <th className="px-4 py-3">Rôle</th>
               <th className="px-4 py-3">Créé le</th>
+              <th className="px-4 py-3"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-50">
             {chargement ? (
               <tr>
-                <td colSpan={4} className="px-4 py-8 text-center text-slate-400">
+                <td colSpan={5} className="px-4 py-8 text-center text-slate-400">
                   <Loader2 className="mx-auto animate-spin" />
                 </td>
               </tr>
             ) : comptes.length === 0 ? (
               <tr>
-                <td colSpan={4} className="px-4 py-8 text-center text-slate-400">
+                <td colSpan={5} className="px-4 py-8 text-center text-slate-400">
                   Aucun compte trouvé.
                 </td>
               </tr>
@@ -2808,6 +3013,17 @@ function PageComptes({ token }) {
                     </Badge>
                   </td>
                   <td className="px-4 py-3 text-slate-500">{FormatDate(c.creeLe)}</td>
+                  <td className="px-4 py-3 text-right">
+                    <MenuActions
+                      actions={[
+                        {
+                          label: "Réinitialiser le mot de passe",
+                          icone: <KeyRound size={14} />,
+                          onClick: () => setCompteReinitialisation(c),
+                        },
+                      ]}
+                    />
+                  </td>
                 </tr>
               ))
             )}
@@ -2822,6 +3038,13 @@ function PageComptes({ token }) {
             setModalCreation(false);
             charger();
           }}
+          token={token}
+        />
+      )}
+      {compteReinitialisation && (
+        <ModalReinitialiserMotDePasse
+          compte={compteReinitialisation}
+          onFermer={() => setCompteReinitialisation(null)}
           token={token}
         />
       )}
@@ -2844,6 +3067,20 @@ export default function App() {
 
   if (!session) {
     return <PageConnexion onConnecte={setSession} />;
+  }
+
+  if (session.user.doitChangerMotDePasse) {
+    return (
+      <PageChangementMotDePasseObligatoire
+        token={session.token}
+        onSuccess={() => {
+          const nouvelleSession = { ...session, user: { ...session.user, doitChangerMotDePasse: false } };
+          ecrireSession(nouvelleSession);
+          setSession(nouvelleSession);
+        }}
+        onDeconnexion={deconnexion}
+      />
+    );
   }
 
   return (
