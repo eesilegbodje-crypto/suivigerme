@@ -22,6 +22,7 @@ import {
   BookOpen,
   Calculator,
   KeyRound,
+  Ban,
   ListChecks,
   TrendingUp,
   AlertTriangle,
@@ -2946,6 +2947,24 @@ function PageComptes({ token }) {
     charger();
   }, [charger]);
 
+  const supprimer = async (compte) => {
+    if (!confirm(`Supprimer le compte de ${compte.nom} ? Cette action est irréversible.`)) return;
+    const reponse = await appelApi(`/auth/utilisateurs/${compte.id}`, { method: "DELETE", token });
+    if (reponse.ok) charger();
+    else alert(reponse.data?.error || "Impossible de supprimer ce compte.");
+  };
+
+  const basculerSuspension = async (compte) => {
+    const action = compte.suspendu ? "reactiver" : "suspendre";
+    const message = compte.suspendu
+      ? `Réactiver le compte de ${compte.nom} ?`
+      : `Suspendre le compte de ${compte.nom} ? La personne ne pourra plus se connecter tant que vous ne le réactivez pas.`;
+    if (!confirm(message)) return;
+    const reponse = await appelApi(`/auth/utilisateurs/${compte.id}/${action}`, { method: "PATCH", token });
+    if (reponse.ok) charger();
+    else alert(reponse.data?.error || "Impossible de modifier ce compte.");
+  };
+
   const stats = useMemo(() => {
     const coordonnateurs = comptes.filter((c) => c.role === "coordonnateur").length;
     return {
@@ -3008,9 +3027,12 @@ function PageComptes({ token }) {
                   <td className="px-4 py-3 font-medium text-slate-700">{c.nom}</td>
                   <td className="px-4 py-3 text-slate-500">{c.email}</td>
                   <td className="px-4 py-3">
-                    <Badge couleur={c.role === "coordonnateur" ? "slate" : "emerald"}>
-                      {c.role === "coordonnateur" ? "Coordonnateur" : "Conseiller"}
-                    </Badge>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <Badge couleur={c.role === "coordonnateur" ? "slate" : "emerald"}>
+                        {c.role === "coordonnateur" ? "Coordonnateur" : "Conseiller"}
+                      </Badge>
+                      {c.suspendu && <Badge couleur="rose">Suspendu</Badge>}
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-slate-500">{FormatDate(c.creeLe)}</td>
                   <td className="px-4 py-3 text-right">
@@ -3020,6 +3042,17 @@ function PageComptes({ token }) {
                           label: "Réinitialiser le mot de passe",
                           icone: <KeyRound size={14} />,
                           onClick: () => setCompteReinitialisation(c),
+                        },
+                        {
+                          label: c.suspendu ? "Réactiver le compte" : "Suspendre le compte",
+                          icone: <Ban size={14} />,
+                          onClick: () => basculerSuspension(c),
+                        },
+                        {
+                          label: "Supprimer le compte",
+                          icone: <Trash2 size={14} />,
+                          danger: true,
+                          onClick: () => supprimer(c),
                         },
                       ]}
                     />
