@@ -34,6 +34,10 @@ import {
   BarChart3,
   Percent,
   Clock,
+  ShieldCheck,
+  ShieldAlert,
+  Lock,
+  History,
 } from "lucide-react";
 import { appelApi, lireSession, ecrireSession } from "./lib/api";
 
@@ -594,6 +598,7 @@ function MisEnPage({ session, page, onChangerPage, onDeconnexion, children }) {
   ];
   if (session.user.role === "coordonnateur") {
     items.push({ id: "comptes", label: "Comptes", icone: <KeyRound size={18} /> });
+    items.push({ id: "securite", label: "Sécurité", icone: <ShieldCheck size={18} /> });
   }
   return (
     <div className="flex min-h-screen bg-slate-50">
@@ -3327,6 +3332,230 @@ function PageSuiviEvaluation({ token }) {
   );
 }
 
+function couleurEvenementSecurite(type) {
+  if (type === "connexion_reussie" || type === "compte_reactive") return "emerald";
+  if (["connexion_echouee", "compte_supprime", "compte_suspendu"].includes(type)) return "rose";
+  if (["mot_de_passe_reinitialise", "mot_de_passe_change"].includes(type)) return "amber";
+  return "slate";
+}
+
+function formatDateHeure(dateIso) {
+  if (!dateIso) return "—";
+  try {
+    return new Date(dateIso).toLocaleString("fr-FR", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "—";
+  }
+}
+
+const TYPES_JOURNAL_SECURITE = [
+  { valeur: "", label: "Tous les types" },
+  { valeur: "connexion_reussie", label: "Connexion réussie" },
+  { valeur: "connexion_echouee", label: "Tentative de connexion échouée" },
+  { valeur: "compte_cree", label: "Compte créé" },
+  { valeur: "compte_supprime", label: "Compte supprimé" },
+  { valeur: "compte_suspendu", label: "Compte suspendu" },
+  { valeur: "compte_reactive", label: "Compte réactivé" },
+  { valeur: "mot_de_passe_reinitialise", label: "Mot de passe réinitialisé" },
+  { valeur: "mot_de_passe_change", label: "Mot de passe changé" },
+];
+
+function PageSecurite({ token }) {
+  const [etatDesLieux, setEtatDesLieux] = useState(null);
+  const [journal, setJournal] = useState([]);
+  const [chargement, setChargement] = useState(true);
+  const [erreur, setErreur] = useState("");
+  const [filtreType, setFiltreType] = useState("");
+  const [recherche, setRecherche] = useState("");
+
+  const charger = useCallback(async () => {
+    setChargement(true);
+    setErreur("");
+    const params = new URLSearchParams();
+    if (filtreType) params.set("type", filtreType);
+    if (recherche) params.set("recherche", recherche);
+
+    const [reponseEtat, reponseJournal] = await Promise.all([
+      appelApi("/securite/etat-des-lieux", { token }),
+      appelApi(`/securite/journal?${params.toString()}`, { token }),
+    ]);
+    if (reponseEtat.ok) setEtatDesLieux(reponseEtat.data);
+    if (reponseJournal.ok) setJournal(reponseJournal.data);
+    if (reponseEtat.erreurReseau || reponseJournal.erreurReseau) {
+      setErreur("Impossible de contacter le serveur.");
+    }
+    setChargement(false);
+  }, [token, filtreType, recherche]);
+
+  useEffect(() => {
+    const idTimer = setTimeout(charger, 250);
+    return () => clearTimeout(idTimer);
+  }, [charger]);
+
+  return (
+    <div className="mx-auto max-w-6xl">
+      <div className="mb-6">
+        <h1 className="text-xl font-semibold text-slate-800">Sécurité</h1>
+        <p className="text-sm text-slate-500">
+          Vue d'ensemble des protections déjà en place et journal des événements sensibles
+          (connexions, actions sur les comptes).
+        </p>
+      </div>
+
+      {erreur && <p className="mb-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">{erreur}</p>}
+
+      {chargement && !etatDesLieux ? (
+        <div className="flex justify-center py-16 text-slate-400">
+          <Loader2 className="animate-spin" />
+        </div>
+      ) : (
+        <div className="space-y-8">
+          {etatDesLieux && (
+            <section>
+              <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-700">
+                <ShieldCheck size={16} /> État des lieux
+              </h2>
+              <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <CarteStat
+                  icone={<KeyRound size={18} />}
+                  label="Comptes au total"
+                  valeur={etatDesLieux.comptes.total}
+                  couleur="slate"
+                />
+                <CarteStat
+                  icone={<Ban size={18} />}
+                  label="Comptes suspendus"
+                  valeur={etatDesLieux.comptes.suspendus}
+                  couleur="amber"
+                />
+                <CarteStat
+                  icone={<Lock size={18} />}
+                  label="Changements de mot de passe en attente"
+                  valeur={etatDesLieux.comptes.changementMotDePasseEnAttente}
+                  couleur="slate"
+                />
+                <CarteStat
+                  icone={<ShieldAlert size={18} />}
+                  label="Connexions échouées (24h)"
+                  valeur={etatDesLieux.connexionsEchoueesDernieres24h}
+                  couleur={etatDesLieux.connexionsEchoueesDernieres24h > 0 ? "rose" : "emerald"}
+                />
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <div className="rounded-2xl border border-slate-100 bg-white p-4">
+                  <p className="mb-1 text-sm font-medium text-slate-700">Règle du mot de passe</p>
+                  <p className="text-sm text-slate-500">
+                    Au moins {etatDesLieux.politiqueMotDePasse.longueurMinimale} caractères,{" "}
+                    {etatDesLieux.politiqueMotDePasse.exigences.toLowerCase()}.
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-slate-100 bg-white p-4">
+                  <p className="mb-1 text-sm font-medium text-slate-700">Protection anti-force brute</p>
+                  <p className="text-sm text-slate-500">
+                    Maximum {etatDesLieux.protectionForceBrute.tentativesMaximum} tentatives de connexion
+                    par {etatDesLieux.protectionForceBrute.fenetreMinutes} minutes, par adresse.
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-slate-100 bg-white p-4">
+                  <p className="mb-1 text-sm font-medium text-slate-700">Session</p>
+                  <p className="text-sm text-slate-500">
+                    Jeton {etatDesLieux.session.typeJeton} valable {etatDesLieux.session.dureeValidite}. Un
+                    compte suspendu est coupé immédiatement, même en cours de session.
+                  </p>
+                </div>
+              </div>
+            </section>
+          )}
+
+          <section>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                <History size={16} /> Journal des événements
+              </h2>
+              <div className="flex flex-wrap gap-3">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                  <input
+                    value={recherche}
+                    onChange={(e) => setRecherche(e.target.value)}
+                    placeholder="Rechercher un nom ou un email..."
+                    className="w-64 rounded-lg border border-slate-200 py-2 pl-9 pr-3 text-sm outline-none focus:border-slate-400"
+                  />
+                </div>
+                <select
+                  value={filtreType}
+                  onChange={(e) => setFiltreType(e.target.value)}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400"
+                >
+                  {TYPES_JOURNAL_SECURITE.map((t) => (
+                    <option key={t.valeur} value={t.valeur}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-400">
+                  <tr>
+                    <th className="px-4 py-3">Date</th>
+                    <th className="px-4 py-3">Événement</th>
+                    <th className="px-4 py-3">Compte concerné</th>
+                    <th className="px-4 py-3">Réalisé par</th>
+                    <th className="px-4 py-3">Détails</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {chargement ? (
+                    <tr>
+                      <td colSpan={5} className="px-4 py-8 text-center text-slate-400">
+                        <Loader2 className="mx-auto animate-spin" />
+                      </td>
+                    </tr>
+                  ) : journal.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-4 py-8 text-center text-slate-400">
+                        Aucun événement trouvé.
+                      </td>
+                    </tr>
+                  ) : (
+                    journal.map((e) => (
+                      <tr key={e.id}>
+                        <td className="px-4 py-3 text-slate-500">{formatDateHeure(e.dateEvenement)}</td>
+                        <td className="px-4 py-3">
+                          <Badge couleur={couleurEvenementSecurite(e.type)}>{e.libelle}</Badge>
+                        </td>
+                        <td className="px-4 py-3 text-slate-600">
+                          {e.nomConcerne ? `${e.nomConcerne} · ` : ""}
+                          {e.emailConcerne}
+                        </td>
+                        <td className="px-4 py-3 text-slate-500">{e.acteurNom || "—"}</td>
+                        <td className="px-4 py-3 text-slate-400">{e.details || "—"}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-2 text-xs text-slate-400">
+              Les 200 événements les plus récents sont affichés. Le journal a commencé à être
+              enregistré avec la mise en place de ce module — aucun historique antérieur n'existe.
+            </p>
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ============================================================================
 // Application
 // ============================================================================
@@ -3363,6 +3592,7 @@ export default function App() {
       {page === "participants" && <PageParticipants token={session.token} />}
       {page === "formations" && <PageFormations token={session.token} />}
       {page === "comptes" && session.user.role === "coordonnateur" && <PageComptes token={session.token} />}
+      {page === "securite" && session.user.role === "coordonnateur" && <PageSecurite token={session.token} />}
       {page === "suivi-evaluation" && <PageSuiviEvaluation token={session.token} />}
     </MisEnPage>
   );
