@@ -108,6 +108,7 @@ function Badge({ children, couleur = "slate" }) {
     emerald: "bg-emerald-100 text-emerald-700",
     rose: "bg-rose-100 text-rose-700",
     amber: "bg-amber-100 text-amber-700",
+    indigo: "bg-indigo-100 text-indigo-700",
   };
   return (
     <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${styles[couleur]}`}>
@@ -678,24 +679,32 @@ const PARTICIPANT_VIDE = {
 function ModalParticipant({ participant, typeSuivi: typeSuiviPage = "Generique", onFermer, onEnregistre, token }) {
   const typeSuiviEffectif = participant?.typeSuivi || typeSuiviPage;
   const [form, setForm] = useState(
-    participant || { ...PARTICIPANT_VIDE, typeSuivi: typeSuiviPage, filiere: "" }
+    participant || { ...PARTICIPANT_VIDE, typeSuivi: typeSuiviPage, filieres: [] }
   );
   const [erreur, setErreur] = useState("");
   const [enregistrement, setEnregistrement] = useState(false);
-  const [filieres, setFilieres] = useState([]);
+  const [optionsFilieres, setOptionsFilieres] = useState([]);
 
   useEffect(() => {
     if (typeSuiviEffectif === "Generique") {
-      setFilieres([]);
+      setOptionsFilieres([]);
       return;
     }
     (async () => {
       const reponse = await appelApi(`/abf/filieres?typeSuivi=${typeSuiviEffectif}`, { token });
-      if (reponse.ok) setFilieres(reponse.data);
+      if (reponse.ok) setOptionsFilieres(reponse.data);
     })();
   }, [typeSuiviEffectif, token]);
 
   const changer = (champ) => (e) => setForm((f) => ({ ...f, [champ]: e.target.value }));
+
+  const basculerFiliere = (id) => {
+    setForm((f) => {
+      const actuelles = f.filieres || [];
+      const nouvelles = actuelles.includes(id) ? actuelles.filter((x) => x !== id) : [...actuelles, id];
+      return { ...f, filieres: nouvelles };
+    });
+  };
 
   const soumettre = async (e) => {
     e.preventDefault();
@@ -704,8 +713,12 @@ function ModalParticipant({ participant, typeSuivi: typeSuiviPage = "Generique",
       setErreur("Le nom est obligatoire.");
       return;
     }
-    if (typeSuiviEffectif !== "Generique" && !form.filiere) {
-      setErreur("Merci de choisir une filière.");
+    if (typeSuiviEffectif !== "Generique" && (!form.filieres || form.filieres.length === 0)) {
+      setErreur("Merci de choisir au moins une filière.");
+      return;
+    }
+    if ((form.filieres || []).includes("autre") && !(form.filierePrecision || "").trim()) {
+      setErreur("Merci de préciser la ou les activité(s).");
       return;
     }
     setEnregistrement(true);
@@ -744,14 +757,36 @@ function ModalParticipant({ participant, typeSuivi: typeSuiviPage = "Generique",
           <Champ label="Secteur d'activité" value={form.secteurActivite || ""} onChange={changer("secteurActivite")} />
         </div>
         {typeSuiviEffectif !== "Generique" && (
-          <Selecteur label="Filière" value={form.filiere || ""} onChange={changer("filiere")}>
-            <option value="">Sélectionner une filière</option>
-            {filieres.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.label}
-              </option>
-            ))}
-          </Selecteur>
+          <div>
+            <span className="mb-1.5 block text-xs font-medium text-slate-600">
+              Filière(s) — plusieurs choix possibles si le participant cumule plusieurs activités
+            </span>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 rounded-lg border border-slate-200 p-3">
+              {optionsFilieres.map((f) => (
+                <label key={f.id} className="flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={(form.filieres || []).includes(f.id)}
+                    onChange={() => basculerFiliere(f.id)}
+                    className="rounded border-slate-300"
+                  />
+                  {f.label}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+        {(form.filieres || []).includes("autre") && (
+          <Champ
+            label={typeSuiviEffectif === "Elevage" ? "Préciser l'espèce/l'activité" : "Préciser la culture"}
+            value={form.filierePrecision || ""}
+            onChange={changer("filierePrecision")}
+            placeholder={
+              typeSuiviEffectif === "Elevage"
+                ? "Ex. Lapins, Porcs, Apiculture... (séparez plusieurs activités par une virgule)"
+                : "Ex. Cacao, Ananas... (séparez plusieurs cultures par une virgule)"
+            }
+          />
         )}
         <Zone label="Notes" value={form.notes || ""} onChange={changer("notes")} />
         {erreur && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">{erreur}</p>}
@@ -924,6 +959,7 @@ function ModalDetailParticipant({ participantId, onFermer, token }) {
   const [diagnosticGlobalEnCours, setDiagnosticGlobalEnCours] = useState(false);
   const [performance, setPerformance] = useState(null);
   const [ficheReference, setFicheReference] = useState(null);
+  const [regenerationFicheEnCours, setRegenerationFicheEnCours] = useState(false);
 
   const charger = useCallback(async () => {
     setChargement(true);
@@ -1063,6 +1099,17 @@ function ModalDetailParticipant({ participantId, onFermer, token }) {
     });
     if (reponse.ok) charger();
     else alert(reponse.data?.error || "Impossible de supprimer cette action.");
+  };
+
+  const regenererFiche = async () => {
+    setRegenerationFicheEnCours(true);
+    const reponse = await appelApi(`/participants/${participantId}/fiche-reference/regenerer`, {
+      method: "POST",
+      token,
+    });
+    setRegenerationFicheEnCours(false);
+    if (reponse.ok) setFicheReference(reponse.data);
+    else alert(reponse.data?.error || "La régénération de la fiche est momentanément indisponible.");
   };
 
   const ONGLETS = [
@@ -1668,20 +1715,64 @@ function ModalDetailParticipant({ participantId, onFermer, token }) {
           )}
 
           {onglet === "fiche" && (
-            <div>
-              {!participant.filiere ? (
+            <div className="space-y-5">
+              {!participant.filieres || participant.filieres.length === 0 ? (
                 <p className="rounded-lg bg-slate-50 px-3 py-4 text-center text-sm text-slate-400">
-                  Merci de renseigner la filière de ce participant (bouton Modifier) pour afficher sa fiche de
-                  référence.
+                  Merci de renseigner au moins une filière pour ce participant (bouton Modifier) pour afficher ses
+                  fiches de référence.
                 </p>
-              ) : !ficheReference?.fiche ? (
+              ) : !ficheReference?.fiches || ficheReference.fiches.length === 0 ? (
                 <p className="rounded-lg bg-slate-50 px-3 py-4 text-center text-sm text-slate-400">
-                  Aucune fiche de référence disponible pour le moment pour cette filière.
+                  Les fiches de référence n'ont pas pu être générées pour le moment. Réessayez un peu plus tard.
                 </p>
-              ) : participant.typeSuivi === "Agriculture" ? (
-                <FicheTechniqueAgriculture fiche={ficheReference.fiche} />
               ) : (
-                <FicheProphylaxieElevage fiche={ficheReference.fiche} />
+                <>
+                  {ficheReference.fiches.some((f) => f.source === "ia") && (
+                    <div className="flex items-center justify-between rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2">
+                      <p className="text-xs text-indigo-700">
+                        <Sparkles size={12} className="mr-1 inline" />
+                        Une ou plusieurs fiches ci-dessous ont été générées automatiquement par IA pour des
+                        activités spécifiques — à faire valider par un professionnel avant de s'y fier pour des
+                        décisions importantes.
+                      </p>
+                      <button
+                        onClick={regenererFiche}
+                        disabled={regenerationFicheEnCours}
+                        className="flex shrink-0 items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 disabled:opacity-50"
+                      >
+                        {regenerationFicheEnCours ? (
+                          <Loader2 size={12} className="animate-spin" />
+                        ) : (
+                          <Sparkles size={12} />
+                        )}
+                        Régénérer
+                      </button>
+                    </div>
+                  )}
+                  {ficheReference.fiches.map((entree) => (
+                    <div key={entree.cle} className="space-y-2 border-t border-slate-100 pt-4 first:border-t-0 first:pt-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-semibold text-slate-700">{entree.label}</p>
+                        {entree.source === "ia" && (
+                          <Badge couleur="indigo">
+                            <Sparkles size={10} className="mr-1 inline" />
+                            IA
+                          </Badge>
+                        )}
+                      </div>
+                      {entree.source === "erreur" ? (
+                        <p className="rounded-lg bg-rose-50 px-3 py-3 text-sm text-rose-600">
+                          La génération de la fiche pour "{entree.label}" a échoué. Réessayez avec le bouton
+                          "Régénérer" ci-dessus.
+                        </p>
+                      ) : participant.typeSuivi === "Agriculture" ? (
+                        <FicheTechniqueAgriculture fiche={entree.fiche} />
+                      ) : (
+                        <FicheProphylaxieElevage fiche={entree.fiche} />
+                      )}
+                    </div>
+                  ))}
+                </>
               )}
             </div>
           )}
@@ -2432,7 +2523,14 @@ function PageParticipants({
     })();
   }, [typeSuivi, token]);
 
-  const libelleFiliere = (idFiliere) => filieres.find((f) => f.id === idFiliere)?.label || idFiliere || "—";
+  const libelleFilieres = (p) => {
+    if (!p.filieres || p.filieres.length === 0) return "—";
+    const libelles = p.filieres.map((id) => {
+      if (id === "autre") return p.filierePrecision || "Autre";
+      return filieres.find((f) => f.id === id)?.label || id;
+    });
+    return libelles.join(", ");
+  };
 
   useEffect(() => {
     const idTimer = setTimeout(charger, 250);
@@ -2503,7 +2601,7 @@ function PageParticipants({
               <th className="px-4 py-3">Nom</th>
               <th className="px-4 py-3">Entreprise</th>
               <th className="px-4 py-3">Localité</th>
-              {typeSuivi !== "Generique" && <th className="px-4 py-3">Filière</th>}
+              {typeSuivi !== "Generique" && <th className="px-4 py-3">Filière(s)</th>}
               <th className="px-4 py-3">Téléphone</th>
               <th className="px-4 py-3">Formations</th>
               <th className="px-4 py-3">Statut</th>
@@ -2535,7 +2633,7 @@ function PageParticipants({
                   <td className="px-4 py-3 text-slate-500">{p.nomEntreprise || "—"}</td>
                   <td className="px-4 py-3 text-slate-500">{p.localite || "—"}</td>
                   {typeSuivi !== "Generique" && (
-                    <td className="px-4 py-3 text-slate-500">{libelleFiliere(p.filiere)}</td>
+                    <td className="px-4 py-3 text-slate-500">{libelleFilieres(p)}</td>
                   )}
                   <td className="px-4 py-3 text-slate-500">{p.telephone || "—"}</td>
                   <td className="px-4 py-3 text-slate-500">{p._count.participations}</td>
