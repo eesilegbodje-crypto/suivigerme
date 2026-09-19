@@ -38,6 +38,10 @@ import {
   ShieldAlert,
   Lock,
   History,
+  Wheat,
+  PawPrint,
+  Leaf,
+  Syringe,
 } from "lucide-react";
 import { appelApi, lireSession, ecrireSession } from "./lib/api";
 
@@ -593,6 +597,8 @@ function MisEnPage({ session, page, onChangerPage, onDeconnexion, children }) {
   const [modalMotDePasse, setModalMotDePasse] = useState(false);
   const items = [
     { id: "participants", label: "Participants", icone: <Users size={18} /> },
+    { id: "participants-agriculture", label: "Participants Agriculture", icone: <Wheat size={18} /> },
+    { id: "participants-elevage", label: "Participants Élevage", icone: <PawPrint size={18} /> },
     { id: "formations", label: "Formations", icone: <GraduationCap size={18} /> },
     { id: "suivi-evaluation", label: "Suivi-évaluation", icone: <Target size={18} /> },
   ];
@@ -669,10 +675,25 @@ const PARTICIPANT_VIDE = {
   notes: "",
 };
 
-function ModalParticipant({ participant, onFermer, onEnregistre, token }) {
-  const [form, setForm] = useState(participant || PARTICIPANT_VIDE);
+function ModalParticipant({ participant, typeSuivi: typeSuiviPage = "Generique", onFermer, onEnregistre, token }) {
+  const typeSuiviEffectif = participant?.typeSuivi || typeSuiviPage;
+  const [form, setForm] = useState(
+    participant || { ...PARTICIPANT_VIDE, typeSuivi: typeSuiviPage, filiere: "" }
+  );
   const [erreur, setErreur] = useState("");
   const [enregistrement, setEnregistrement] = useState(false);
+  const [filieres, setFilieres] = useState([]);
+
+  useEffect(() => {
+    if (typeSuiviEffectif === "Generique") {
+      setFilieres([]);
+      return;
+    }
+    (async () => {
+      const reponse = await appelApi(`/abf/filieres?typeSuivi=${typeSuiviEffectif}`, { token });
+      if (reponse.ok) setFilieres(reponse.data);
+    })();
+  }, [typeSuiviEffectif, token]);
 
   const changer = (champ) => (e) => setForm((f) => ({ ...f, [champ]: e.target.value }));
 
@@ -683,10 +704,15 @@ function ModalParticipant({ participant, onFermer, onEnregistre, token }) {
       setErreur("Le nom est obligatoire.");
       return;
     }
+    if (typeSuiviEffectif !== "Generique" && !form.filiere) {
+      setErreur("Merci de choisir une filière.");
+      return;
+    }
     setEnregistrement(true);
+    const corps = { ...form, typeSuivi: typeSuiviEffectif };
     const reponse = participant
-      ? await appelApi(`/participants/${participant.id}`, { method: "PUT", body: form, token })
-      : await appelApi("/participants", { method: "POST", body: form, token });
+      ? await appelApi(`/participants/${participant.id}`, { method: "PUT", body: corps, token })
+      : await appelApi("/participants", { method: "POST", body: corps, token });
     setEnregistrement(false);
     if (reponse.ok) {
       onEnregistre();
@@ -717,6 +743,16 @@ function ModalParticipant({ participant, onFermer, onEnregistre, token }) {
           <Champ label="Nom de l'entreprise" value={form.nomEntreprise || ""} onChange={changer("nomEntreprise")} />
           <Champ label="Secteur d'activité" value={form.secteurActivite || ""} onChange={changer("secteurActivite")} />
         </div>
+        {typeSuiviEffectif !== "Generique" && (
+          <Selecteur label="Filière" value={form.filiere || ""} onChange={changer("filiere")}>
+            <option value="">Sélectionner une filière</option>
+            {filieres.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.label}
+              </option>
+            ))}
+          </Selecteur>
+        )}
         <Zone label="Notes" value={form.notes || ""} onChange={changer("notes")} />
         {erreur && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">{erreur}</p>}
         <div className="flex justify-end gap-2 pt-2">
@@ -766,6 +802,105 @@ const REGISTRES_SUIVIS = [
   { champ: "registreActifs", label: "Actifs" },
 ];
 
+// Fiche technique (culture) pour un participant Agriculture. Contenu statique cote serveur
+// (fichesTechniquesAgriculture.js), affiche tel quel : redige par Claude a partir de bonnes
+// pratiques generales, a faire relire par un agronome avant diffusion large aux conseillers.
+function FicheTechniqueAgriculture({ fiche }) {
+  return (
+    <div className="space-y-4">
+      <p className="text-sm font-semibold text-slate-700">{fiche.label}</p>
+
+      <div>
+        <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">Itinéraire technique</p>
+        <ul className="ml-4 list-disc space-y-1 text-sm text-slate-600">
+          {fiche.itineraireTechnique.map((ligne, i) => (
+            <li key={i}>{ligne}</li>
+          ))}
+        </ul>
+      </div>
+
+      <div>
+        <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">Calendrier indicatif</p>
+        <p className="text-sm text-slate-600">{fiche.calendrierIndicatif}</p>
+      </div>
+
+      <div>
+        <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">Conservation</p>
+        <p className="text-sm text-slate-600">{fiche.conservation}</p>
+      </div>
+
+      <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+        <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-700">Points de vigilance</p>
+        <ul className="ml-4 list-disc space-y-1 text-sm text-amber-800">
+          {fiche.pointsDeVigilance.map((ligne, i) => (
+            <li key={i}>{ligne}</li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+// Fiche de prophylaxie (filiere) pour un participant Elevage. Contenu statique cote serveur
+// (fichesProphylaxieElevage.js) : contrairement au reste de l'appli, il s'agit de contenu de
+// sante animale, a faire relire IMPERATIVEMENT par un agent/technicien d'elevage ou un
+// veterinaire avant diffusion large aux conseillers.
+function FicheProphylaxieElevage({ fiche }) {
+  return (
+    <div className="space-y-4">
+      <p className="text-sm font-semibold text-slate-700">{fiche.label}</p>
+
+      <div>
+        <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">
+          Calendrier de vaccination / déparasitage
+        </p>
+        <ul className="ml-4 list-disc space-y-1 text-sm text-slate-600">
+          {fiche.calendrierVaccinationDeparasitage.map((ligne, i) => (
+            <li key={i}>{ligne}</li>
+          ))}
+        </ul>
+      </div>
+
+      <div>
+        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">Maladies courantes</p>
+        <div className="space-y-2">
+          {fiche.maladiesCourantes.map((maladie, i) => (
+            <div key={i} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+              <p className="text-sm font-medium text-slate-700">{maladie.nom}</p>
+              <p className="mt-1 text-xs text-slate-500">
+                <span className="font-medium text-slate-600">Signes : </span>
+                {maladie.signes}
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                <span className="font-medium text-slate-600">Prévention : </span>
+                {maladie.prevention}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">Hygiène de base</p>
+        <ul className="ml-4 list-disc space-y-1 text-sm text-slate-600">
+          {fiche.hygieneDeBase.map((ligne, i) => (
+            <li key={i}>{ligne}</li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="rounded-lg border border-rose-200 bg-rose-50 p-3">
+        <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-rose-700">Signes d'alerte</p>
+        <ul className="ml-4 list-disc space-y-1 text-sm text-rose-800">
+          {fiche.signesAlerte.map((ligne, i) => (
+            <li key={i}>{ligne}</li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 function ModalDetailParticipant({ participantId, onFermer, token }) {
   const [participant, setParticipant] = useState(null);
   const [evaluations, setEvaluations] = useState([]);
@@ -788,11 +923,22 @@ function ModalDetailParticipant({ participantId, onFermer, token }) {
   const [modalNouvelleAction, setModalNouvelleAction] = useState(false);
   const [diagnosticGlobalEnCours, setDiagnosticGlobalEnCours] = useState(false);
   const [performance, setPerformance] = useState(null);
+  const [ficheReference, setFicheReference] = useState(null);
 
   const charger = useCallback(async () => {
     setChargement(true);
+    // Le questionnaire ABF a utiliser (/abf/structure) et la fiche de reference dependent du
+    // typeSuivi du participant : on le recupere d'abord, avant les autres appels en parallele.
+    const reponseParticipant = await appelApi(`/participants/${participantId}`, { token });
+    if (!reponseParticipant.ok) {
+      setParticipant(null);
+      setChargement(false);
+      return;
+    }
+    setParticipant(reponseParticipant.data);
+    const typeSuiviParticipant = reponseParticipant.data.typeSuivi || "Generique";
+
     const [
-      reponseParticipant,
       reponseEvaluations,
       reponseNotes,
       reponseStructure,
@@ -800,23 +946,24 @@ function ModalDetailParticipant({ participantId, onFermer, token }) {
       reponseEstimations,
       reponseActions,
       reponsePerformance,
+      reponseFiche,
     ] = await Promise.all([
-        appelApi(`/participants/${participantId}`, { token }),
         appelApi(`/participants/${participantId}/evaluations-abf`, { token }),
         appelApi(`/participants/${participantId}/notes-suivi`, { token }),
-        appelApi("/abf/structure", { token }),
+        appelApi(`/abf/structure?typeSuivi=${typeSuiviParticipant}`, { token }),
         appelApi(`/participants/${participantId}/releves-mensuels`, { token }),
         appelApi(`/participants/${participantId}/estimations-couts`, { token }),
         appelApi(`/participants/${participantId}/actions-accompagnement`, { token }),
         appelApi(`/participants/${participantId}/performance`, { token }),
+        appelApi(`/participants/${participantId}/fiche-reference`, { token }),
       ]);
-    if (reponseParticipant.ok) setParticipant(reponseParticipant.data);
     if (reponseEvaluations.ok) setEvaluations(reponseEvaluations.data);
     if (reponseNotes.ok) setNotes(reponseNotes.data);
     if (reponseReleves.ok) setReleves(reponseReleves.data);
     if (reponseEstimations.ok) setEstimations(reponseEstimations.data);
     if (reponseActions.ok) setActions(reponseActions.data);
     if (reponsePerformance.ok) setPerformance(reponsePerformance.data);
+    if (reponseFiche.ok) setFicheReference(reponseFiche.data);
     if (reponseStructure.ok) {
       ABF_RUBRIQUES = reponseStructure.data.rubriques;
       ABF_DOMAINES = reponseStructure.data.domainesBesoinFormation;
@@ -927,6 +1074,11 @@ function ModalDetailParticipant({ participantId, onFermer, token }) {
     { id: "accompagnement", label: "Plan d'accompagnement", icone: <ListChecks size={14} /> },
     { id: "performance", label: "Performance", icone: <TrendingUp size={14} /> },
   ];
+  if (participant?.typeSuivi === "Agriculture") {
+    ONGLETS.push({ id: "fiche", label: "Fiche technique", icone: <Leaf size={14} /> });
+  } else if (participant?.typeSuivi === "Elevage") {
+    ONGLETS.push({ id: "fiche", label: "Prophylaxie", icone: <Syringe size={14} /> });
+  }
 
   return (
     <Modal titre={participant ? participant.nom : "Fiche participant"} onFermer={onFermer} large>
@@ -1512,6 +1664,25 @@ function ModalDetailParticipant({ participantId, onFermer, token }) {
                   <GraphiqueBeneficeNet donnees={performance.evolutionFinanciere} />
                 )}
               </div>
+            </div>
+          )}
+
+          {onglet === "fiche" && (
+            <div>
+              {!participant.filiere ? (
+                <p className="rounded-lg bg-slate-50 px-3 py-4 text-center text-sm text-slate-400">
+                  Merci de renseigner la filière de ce participant (bouton Modifier) pour afficher sa fiche de
+                  référence.
+                </p>
+              ) : !ficheReference?.fiche ? (
+                <p className="rounded-lg bg-slate-50 px-3 py-4 text-center text-sm text-slate-400">
+                  Aucune fiche de référence disponible pour le moment pour cette filière.
+                </p>
+              ) : participant.typeSuivi === "Agriculture" ? (
+                <FicheTechniqueAgriculture fiche={ficheReference.fiche} />
+              ) : (
+                <FicheProphylaxieElevage fiche={ficheReference.fiche} />
+              )}
             </div>
           )}
         </div>
@@ -2218,7 +2389,12 @@ function ModalActionAccompagnement({ participantId, action, evaluations, diagnos
 // modules GERME reste définie à un seul endroit : le serveur (src/lib/modulesGerme.js).
 let MODULES_GERME_LABEL = {};
 
-function PageParticipants({ token }) {
+function PageParticipants({
+  token,
+  typeSuivi = "Generique",
+  titre = "Participants",
+  description = "Entrepreneurs et responsables de PME suivis par le programme.",
+}) {
   const [participants, setParticipants] = useState([]);
   const [chargement, setChargement] = useState(true);
   const [recherche, setRecherche] = useState("");
@@ -2227,6 +2403,7 @@ function PageParticipants({ token }) {
   const [participantEnEdition, setParticipantEnEdition] = useState(null);
   const [participantEnDetail, setParticipantEnDetail] = useState(null);
   const [erreur, setErreur] = useState("");
+  const [filieres, setFilieres] = useState([]);
 
   const charger = useCallback(async () => {
     setChargement(true);
@@ -2234,6 +2411,7 @@ function PageParticipants({ token }) {
     const params = new URLSearchParams();
     if (recherche) params.set("recherche", recherche);
     if (statut) params.set("statut", statut);
+    params.set("typeSuivi", typeSuivi);
     const reponse = await appelApi(`/participants?${params.toString()}`, { token });
     if (reponse.ok) {
       setParticipants(reponse.data);
@@ -2241,7 +2419,20 @@ function PageParticipants({ token }) {
       setErreur("Impossible de contacter le serveur.");
     }
     setChargement(false);
-  }, [recherche, statut, token]);
+  }, [recherche, statut, typeSuivi, token]);
+
+  useEffect(() => {
+    if (typeSuivi === "Generique") {
+      setFilieres([]);
+      return;
+    }
+    (async () => {
+      const reponse = await appelApi(`/abf/filieres?typeSuivi=${typeSuivi}`, { token });
+      if (reponse.ok) setFilieres(reponse.data);
+    })();
+  }, [typeSuivi, token]);
+
+  const libelleFiliere = (idFiliere) => filieres.find((f) => f.id === idFiliere)?.label || idFiliere || "—";
 
   useEffect(() => {
     const idTimer = setTimeout(charger, 250);
@@ -2266,8 +2457,8 @@ function PageParticipants({ token }) {
     <div className="mx-auto max-w-6xl">
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-slate-800">Participants</h1>
-          <p className="text-sm text-slate-500">Entrepreneurs et responsables de PME suivis par le programme.</p>
+          <h1 className="text-xl font-semibold text-slate-800">{titre}</h1>
+          <p className="text-sm text-slate-500">{description}</p>
         </div>
         <Bouton onClick={() => setModalCreation(true)}>
           <Plus size={16} /> Nouveau participant
@@ -2312,6 +2503,7 @@ function PageParticipants({ token }) {
               <th className="px-4 py-3">Nom</th>
               <th className="px-4 py-3">Entreprise</th>
               <th className="px-4 py-3">Localité</th>
+              {typeSuivi !== "Generique" && <th className="px-4 py-3">Filière</th>}
               <th className="px-4 py-3">Téléphone</th>
               <th className="px-4 py-3">Formations</th>
               <th className="px-4 py-3">Statut</th>
@@ -2322,13 +2514,13 @@ function PageParticipants({ token }) {
           <tbody className="divide-y divide-slate-50">
             {chargement ? (
               <tr>
-                <td colSpan={8} className="px-4 py-8 text-center text-slate-400">
+                <td colSpan={typeSuivi !== "Generique" ? 9 : 8} className="px-4 py-8 text-center text-slate-400">
                   <Loader2 className="mx-auto animate-spin" />
                 </td>
               </tr>
             ) : participants.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-8 text-center text-slate-400">
+                <td colSpan={typeSuivi !== "Generique" ? 9 : 8} className="px-4 py-8 text-center text-slate-400">
                   Aucun participant trouvé.
                 </td>
               </tr>
@@ -2342,6 +2534,9 @@ function PageParticipants({ token }) {
                   <td className="px-4 py-3 font-medium text-slate-700">{p.nom}</td>
                   <td className="px-4 py-3 text-slate-500">{p.nomEntreprise || "—"}</td>
                   <td className="px-4 py-3 text-slate-500">{p.localite || "—"}</td>
+                  {typeSuivi !== "Generique" && (
+                    <td className="px-4 py-3 text-slate-500">{libelleFiliere(p.filiere)}</td>
+                  )}
                   <td className="px-4 py-3 text-slate-500">{p.telephone || "—"}</td>
                   <td className="px-4 py-3 text-slate-500">{p._count.participations}</td>
                   <td className="px-4 py-3">
@@ -2376,6 +2571,7 @@ function PageParticipants({ token }) {
 
       {modalCreation && (
         <ModalParticipant
+          typeSuivi={typeSuivi}
           onFermer={() => setModalCreation(false)}
           onEnregistre={() => {
             setModalCreation(false);
@@ -2387,6 +2583,7 @@ function PageParticipants({ token }) {
       {participantEnEdition && (
         <ModalParticipant
           participant={participantEnEdition}
+          typeSuivi={typeSuivi}
           onFermer={() => setParticipantEnEdition(null)}
           onEnregistre={() => {
             setParticipantEnEdition(null);
@@ -3589,7 +3786,23 @@ export default function App() {
 
   return (
     <MisEnPage session={session} page={page} onChangerPage={setPage} onDeconnexion={deconnexion}>
-      {page === "participants" && <PageParticipants token={session.token} />}
+      {page === "participants" && <PageParticipants token={session.token} typeSuivi="Generique" />}
+      {page === "participants-agriculture" && (
+        <PageParticipants
+          token={session.token}
+          typeSuivi="Agriculture"
+          titre="Participants Agriculture"
+          description="Producteurs agricoles suivis par le programme."
+        />
+      )}
+      {page === "participants-elevage" && (
+        <PageParticipants
+          token={session.token}
+          typeSuivi="Elevage"
+          titre="Participants Élevage"
+          description="Éleveurs suivis par le programme."
+        />
+      )}
       {page === "formations" && <PageFormations token={session.token} />}
       {page === "comptes" && session.user.role === "coordonnateur" && <PageComptes token={session.token} />}
       {page === "securite" && session.user.role === "coordonnateur" && <PageSecurite token={session.token} />}
